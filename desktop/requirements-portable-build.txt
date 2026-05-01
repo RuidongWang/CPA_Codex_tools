@@ -1,0 +1,2 @@
+# 构建 portable 单 exe 时，需要先安装 PyInstaller。
+pyinstaller>=6.0,<7.0

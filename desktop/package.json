@@ -1,0 +1,42 @@
+{
+  "name": "cpa-quota-desk",
+  "private": true,
+  "version": "0.1.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "web:dev": "vite",
+    "web:build": "tsc && vite build",
+    "web:open": "npm run web:build && vite preview --open",
+    "web:preview": "vite preview",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "python:sidecar": "python ./scripts/build_python_sidecar.py",
+    "tauri:install": "npm install --prefix ./src-tauri",
+    "tauri:dev": "node ./scripts/run_tauri_cli.mjs dev",
+    "tauri:portable": "node ./scripts/run_tauri_cli.mjs build --no-bundle",
+    "portable:build": "npm run python:sidecar && npm run tauri:portable && node ./scripts/build_portable_release.mjs",
+    "test": "vitest",
+    "test:node": "node --test ./scripts/tauri_cli_support.node-check.mjs ./scripts/version_support.node-check.mjs",
+    "version:sync": "node ./scripts/sync_versions.mjs",
+    "version:check": "node ./scripts/check_versions.mjs",
+    "tauri": "node ./scripts/run_tauri_cli.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  }
+}

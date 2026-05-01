@@ -1,0 +1,2 @@
+# codex_quota_checker.py 运行期只依赖 Python 标准库。
+# 这里保留空 requirements 文件，明确公开仓库不需要额外 pip 包。
