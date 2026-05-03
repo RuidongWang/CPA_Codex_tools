@@ -839,8 +839,13 @@ button.metric-card:focus-visible {
   overflow: auto;
 }
 
+.account-list-body {
+  scrollbar-gutter: stable;
+}
+
 .quota-grid {
   width: 100%;
+  min-width: 1120px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -875,34 +880,39 @@ button.metric-card:focus-visible {
 
 .quota-grid th:nth-child(2),
 .quota-grid td:nth-child(2) {
-  width: 25%;
+  width: 230px;
 }
 
 .quota-grid th:nth-child(3),
 .quota-grid td:nth-child(3) {
-  width: 8%;
+  width: 86px;
 }
 
 .quota-grid th:nth-child(4),
 .quota-grid td:nth-child(4) {
-  width: 8%;
+  width: 90px;
 }
 
 .quota-grid th:nth-child(5),
 .quota-grid td:nth-child(5) {
-  width: 10%;
+  width: 88px;
 }
 
 .quota-grid th:nth-child(6),
 .quota-grid td:nth-child(6),
 .quota-grid th:nth-child(7),
 .quota-grid td:nth-child(7) {
-  width: 15%;
+  width: 156px;
 }
 
 .quota-grid th:nth-child(8),
 .quota-grid td:nth-child(8) {
-  width: 10%;
+  width: 132px;
+}
+
+.quota-grid th:nth-child(9),
+.quota-grid td:nth-child(9) {
+  width: 118px;
 }
 
 .quota-grid__sort {
@@ -928,6 +938,13 @@ button.metric-card:focus-visible {
 .quota-grid__sort .material-symbols-outlined {
   font-size: 15px;
   color: var(--text-muted);
+}
+
+.quota-grid__sort span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .quota-grid__sort--active,
@@ -973,10 +990,168 @@ button.metric-card:focus-visible {
   white-space: nowrap;
 }
 
-.quota-grid__updated-at {
+.quota-grid__updated-at,
+.quota-grid__quota-updated-at {
   white-space: nowrap;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+.quota-grid__spacer {
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.account-card-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.account-card {
+  min-width: 0;
+  min-height: 198px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(134, 160, 206, 0.16);
+  border-radius: 16px;
+  background: rgba(18, 26, 38, 0.74);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.account-card:hover,
+.account-card:focus-visible {
+  background: rgba(31, 45, 62, 0.58);
+  border-color: rgba(114, 194, 255, 0.28);
+  outline: none;
+}
+
+.account-card--active {
+  border-color: rgba(114, 194, 255, 0.5);
+  background: rgba(114, 194, 255, 0.13);
+  box-shadow: inset 3px 0 0 rgba(114, 194, 255, 0.8);
+}
+
+.account-card__topline {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.account-card__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 32px;
+}
+
+.account-card__check input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.account-card__identity {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.account-card__identity strong,
+.account-card__identity span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-card__identity strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.account-card__identity span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.account-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-card__meta > span {
+  max-width: 100%;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(134, 160, 206, 0.12);
+  border-radius: 999px;
+  background: rgba(6, 12, 20, 0.42);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-card__meta strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.account-card__quota-updated {
+  color: #b7d7c9;
+}
+
+.account-card__quotas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.account-card__quota {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(134, 160, 206, 0.1);
+  border-radius: 12px;
+  background: rgba(8, 14, 22, 0.34);
+}
+
+.account-card__quota-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.account-card__quota-meta strong {
+  color: var(--text-primary);
+}
+
+.account-card__reset {
+  color: var(--text-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-chip,
@@ -1544,6 +1719,212 @@ button.metric-card:focus-visible {
   padding: 22px 18px;
   color: var(--text-muted);
   text-align: center;
+}
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+    overflow: auto;
+  }
+
+  body {
+    min-width: 0;
+    font-size: 12px;
+  }
+
+  .stitch-shell {
+    height: auto;
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 8px;
+    overflow: visible;
+  }
+
+  .rail {
+    min-width: 0;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border-right: 1px solid var(--outline);
+    border-radius: 18px 18px 0 0;
+    overflow: hidden;
+  }
+
+  .rail__brand {
+    width: auto;
+    min-width: 74px;
+    min-height: 52px;
+    padding-right: 8px;
+    border-right: 1px solid var(--outline);
+    border-bottom: 0;
+  }
+
+  .rail__brand .material-symbols-outlined {
+    font-size: 22px;
+  }
+
+  .rail__brand-mark {
+    font-size: 9px;
+    letter-spacing: 0.08em;
+  }
+
+  .rail__nav {
+    min-width: 0;
+    flex: 1;
+    flex-direction: row;
+    gap: 6px;
+    padding: 0;
+    overflow-x: auto;
+  }
+
+  .rail-button {
+    min-width: 72px;
+    padding: 8px 6px;
+    border-radius: 14px;
+  }
+
+  .rail-button .material-symbols-outlined {
+    font-size: 19px;
+  }
+
+  .rail-button__label {
+    font-size: 11px;
+  }
+
+  .stitch-main {
+    border-radius: 0 0 18px 18px;
+    overflow: visible;
+  }
+
+  .window-chrome {
+    min-height: 52px;
+    padding: 0 10px;
+  }
+
+  .window-chrome__brand {
+    min-width: 0;
+  }
+
+  .window-chrome__title {
+    font-size: 14px;
+  }
+
+  .window-chrome__version,
+  .window-chrome__repo-link {
+    display: none;
+  }
+
+  .command-bar,
+  .metric-grid,
+  .error-banner,
+  .stitch-content {
+    margin-left: 10px;
+    margin-right: 10px;
+  }
+
+  .command-bar {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .command-bar__inputs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .command-bar__actions {
+    align-items: stretch;
+  }
+
+  .command-bar__action-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .command-button {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+    white-space: normal;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-card {
+    min-height: 72px;
+    border-radius: 16px;
+  }
+
+  .metric-card__value {
+    font-size: 25px;
+  }
+
+  .scan-progress {
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
+
+  .stitch-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    overflow: visible;
+  }
+
+  .grid-panel,
+  .detail-panel {
+    border-radius: 18px;
+  }
+
+  .account-list-body--mobile {
+    max-height: min(66vh, 720px);
+    overflow: auto;
+  }
+
+  .grid-panel__header {
+    padding: 11px 12px;
+  }
+
+  .grid-panel__summary {
+    justify-items: end;
+    text-align: right;
+  }
+
+  .detail-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .account-card-list {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .account-card {
+    min-height: 202px;
+    border-radius: 14px;
+  }
+
+  .account-card__topline {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .account-card__topline .status-chip {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .account-card__quotas {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1460px) {

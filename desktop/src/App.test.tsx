@@ -29,6 +29,7 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
         additional_windows: [],
         error: "",
         last_query_at: null,
+        quota_updated_at: null,
       },
       {
         name: "codex-team-a.json",
@@ -42,6 +43,7 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
         additional_windows: [],
         error: "",
         last_query_at: null,
+        quota_updated_at: null,
       },
       {
         name: "codex-team-b.json",
@@ -55,6 +57,7 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
         additional_windows: [],
         error: "",
         last_query_at: null,
+        quota_updated_at: null,
       },
     ],
     error: "",
@@ -93,21 +96,27 @@ vi.mock("./lib/api", () => ({
 
 // 批量返回值按 auth_index 回填，确保一次 checker 调用后的列表合并仍然可验证。
 function buildQueryPayload(authIndexes: string[]) {
-  const quotaByAuthIndex: Record<string, { quota5h: number; quota7d: number; queriedAt: string }> = {
+  const quotaByAuthIndex: Record<string, { quota5h: number; quota7d: number; queriedAt: string; reset5h: string; reset7d: string }> = {
     "idx-free": {
       quota5h: 80,
       quota7d: 60,
       queriedAt: "2026-04-25T01:05:00+08:00",
+      reset5h: "04-25 06:00",
+      reset7d: "04-29 06:00",
     },
     "idx-team-a": {
       quota5h: 45,
       quota7d: 90,
       queriedAt: "2026-04-25T01:08:00+08:00",
+      reset5h: "04-25 07:30",
+      reset7d: "04-29 07:30",
     },
     "idx-team-b": {
       quota5h: 20,
       quota7d: 35,
       queriedAt: "2026-04-25T01:12:00+08:00",
+      reset5h: "04-25 09:00",
+      reset7d: "04-29 09:00",
     },
   };
   const items = authIndexes.map((authIndex) => {
@@ -125,7 +134,7 @@ function buildQueryPayload(authIndexes: string[]) {
           label: "代码 5h",
           used_percent: quota ? 100 - quota.quota5h : 20,
           remaining_percent: quota?.quota5h ?? 80,
-          reset_label: "04-25 06:00",
+          reset_label: quota?.reset5h ?? "04-25 06:00",
           exhausted: false,
         },
         {
@@ -133,11 +142,12 @@ function buildQueryPayload(authIndexes: string[]) {
           label: "代码 7d",
           used_percent: quota ? 100 - quota.quota7d : 40,
           remaining_percent: quota?.quota7d ?? 60,
-          reset_label: "04-29 06:00",
+          reset_label: quota?.reset7d ?? "04-29 06:00",
           exhausted: false,
         },
       ],
       last_query_at: quota?.queriedAt ?? "2026-04-25T01:05:00+08:00",
+      quota_updated_at: quota?.reset5h ?? "04-25 06:00",
     };
   });
 
@@ -176,6 +186,7 @@ function makeItem(overrides: Partial<MockItem> = {}): MockItem {
     additional_windows: [],
     error: "",
     last_query_at: null,
+    quota_updated_at: null,
     ...overrides,
   };
 }
@@ -284,6 +295,7 @@ describe("App", () => {
     expect(screen.getByRole("columnheader", { name: "状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "5h 额度" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "7d 额度" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "额度更新时间" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "优先级" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "更新时间" })).toBeInTheDocument();
     expect(screen.getByText("99")).toBeInTheDocument();
@@ -1049,6 +1061,7 @@ describe("App", () => {
 
     expect(await screen.findByText("下次刷新 04-25 06:00")).toBeInTheDocument();
     expect(screen.getByText("下次刷新 04-29 06:00")).toBeInTheDocument();
+    expect(screen.getByText("04-25 06:00")).toBeInTheDocument();
     expect(screen.getByText("04-25 01:05")).toBeInTheDocument();
     expect(screen.getByTitle("2026-04-25T01:05:00+08:00")).toBeInTheDocument();
     expect(mockApi.savePayloadCache).toHaveBeenCalled();

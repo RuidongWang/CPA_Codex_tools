@@ -11,11 +11,13 @@ const TAURI_CLI_RELATIVE_ENTRY = path.join(
 );
 
 export function resolveTauriCliEntry(projectRoot) {
-  return path.join(projectRoot, TAURI_CLI_RELATIVE_ENTRY);
+  const pathApi = /^[a-zA-Z]:[\\/]/.test(projectRoot) || projectRoot.includes("\\") ? path.win32 : path;
+  return pathApi.join(projectRoot, TAURI_CLI_RELATIVE_ENTRY);
 }
 
 export function buildTauriCliInstallHint(projectRoot) {
-  const tauriRoot = path.join(projectRoot, "src-tauri");
+  const pathApi = /^[a-zA-Z]:[\\/]/.test(projectRoot) || projectRoot.includes("\\") ? path.win32 : path;
+  const tauriRoot = pathApi.join(projectRoot, "src-tauri");
   return `未找到桌面端 Tauri CLI。请先执行 npm install --prefix .\\src-tauri，或进入 ${tauriRoot} 后执行 npm install。`;
 }
 

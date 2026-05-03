@@ -823,7 +823,17 @@ def auth_record_to_item(record: AuthRecord) -> dict[str, Any]:
         "additional_windows": [],
         "error": "",
         "last_query_at": None,
+        "quota_updated_at": None,
     }
+
+
+def primary_quota_reset_label(windows: list[QuotaWindow]) -> str | None:
+    """额度更新时间列复用 5h 主额度里的下次刷新时间。"""
+
+    for window in windows:
+        if window.id == "code-5h" and window.reset_label and window.reset_label != "-":
+            return window.reset_label
+    return None
 
 
 def report_to_item(report: QuotaReport) -> dict[str, Any]:
@@ -844,6 +854,7 @@ def report_to_item(report: QuotaReport) -> dict[str, Any]:
         "error": report.error,
         "timings_ms": dict(report.timings_ms),
         "last_query_at": now_iso(),
+        "quota_updated_at": primary_quota_reset_label(report.windows),
     }
 
 

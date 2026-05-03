@@ -39,6 +39,7 @@ const demoItems: AccountItem[] = [
     additional_windows: [],
     error: "",
     last_query_at: null,
+    quota_updated_at: null,
   },
   {
     name: "codex-b.json",
@@ -53,6 +54,7 @@ const demoItems: AccountItem[] = [
     additional_windows: [],
     error: "",
     last_query_at: null,
+    quota_updated_at: null,
   },
 ];
 

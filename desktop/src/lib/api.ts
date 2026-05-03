@@ -1,6 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { normalizePriorityPlanKey, normalizePriorityPlanOrder, PRIORITY_PLAN_KEYS } from "./priority";
+import {
+  clearWebPayloadCache,
+  clearWebQuotaSnapshots,
+  loadWebPayloadCache,
+  loadWebQuotaSnapshots,
+  saveWebPayloadCache,
+  saveWebQuotaSnapshot,
+  type QuotaSnapshotRecord,
+} from "./web-cache";
 import type { AccountItem, DownloadedAccountConfig, PayloadEnvelope, QueryProgressEvent, RuntimeConfig } from "../types";
 
 // 开源版不再内置开发期地址，这里只保留示例占位，避免把本地端口写死到产物和文档里。
@@ -17,6 +26,7 @@ const WEB_RUNTIME_CONFIG_KEY = `${WEB_CACHE_NAMESPACE}.runtime-config`;
 const WEB_PAYLOAD_CACHE_KEY = `${WEB_CACHE_NAMESPACE}.payload-cache`;
 const LEGACY_WEB_RUNTIME_CONFIG_KEY = "cpa-quota-desk.runtime-config";
 const LEGACY_WEB_PAYLOAD_CACHE_KEY = "cpa-quota-desk.payload-cache";
+const WEB_MANAGEMENT_FETCH_TIMEOUT_MS = 30_000;
 
 interface WebAuthRecord {
   name: string;
@@ -35,6 +45,7 @@ interface WebQuotaReport extends WebAuthRecord {
   error: string;
   timings_ms: Record<string, number>;
   last_query_at: string | null;
+  quota_updated_at: string | null;
 }
 
 export function isTauriRuntime(): boolean {
@@ -71,6 +82,7 @@ function emptyPayload(): PayloadEnvelope {
 
 function normalizeItem(input: Partial<AccountItem>): AccountItem {
   const remotePriority = typeof input.remote_priority === "number" ? input.remote_priority : input.priority;
+  const windows = Array.isArray(input.windows) ? input.windows : [];
   return {
     name: input.name ?? "",
     email: input.email ?? "",
@@ -83,11 +95,12 @@ function normalizeItem(input: Partial<AccountItem>): AccountItem {
     draft_priority: typeof input.draft_priority === "number" ? input.draft_priority : undefined,
     dirty_priority: Boolean(input.dirty_priority),
     status: input.status ?? "unknown",
-    windows: Array.isArray(input.windows) ? input.windows : [],
+    windows,
     additional_windows: Array.isArray(input.additional_windows) ? input.additional_windows : [],
     error: input.error ?? "",
     timings_ms: input.timings_ms ?? {},
     last_query_at: input.last_query_at ?? null,
+    quota_updated_at: readPrimaryQuotaResetLabel(windows) ?? (typeof input.quota_updated_at === "string" ? input.quota_updated_at : null),
   };
 }
 
@@ -364,6 +377,7 @@ function authRecordToItem(record: WebAuthRecord): Partial<AccountItem> {
     additional_windows: [],
     error: "",
     last_query_at: null,
+    quota_updated_at: null,
   };
 }
 
@@ -402,6 +416,96 @@ function buildQueryPayload(reports: WebQuotaReport[]): PayloadEnvelope {
   });
 }
 
+function hasFreshQuota(report: WebQuotaReport): boolean {
+  return !report.error && report.windows.length > 0;
+}
+
+function readPrimaryQuotaResetLabel(windows: AccountItem["windows"]): string | null {
+  const resetLabel = windows.find((window) => window.id === "code-5h")?.reset_label ?? null;
+  return resetLabel && resetLabel !== "-" ? resetLabel : null;
+}
+
+function mergeQuotaSnapshotIntoItem(item: AccountItem, snapshot: QuotaSnapshotRecord | undefined): AccountItem {
+  if (!snapshot) {
+    return item;
+  }
+  return normalizeItem({
+    ...item,
+    name: item.name || snapshot.name,
+    email: item.email || snapshot.email,
+    status: snapshot.status,
+    windows: snapshot.windows,
+    additional_windows: snapshot.additional_windows,
+    error: snapshot.error,
+    timings_ms: snapshot.timings_ms,
+    last_query_at: snapshot.last_query_at,
+    quota_updated_at: snapshot.quota_updated_at,
+  });
+}
+
+async function mergeQuotaSnapshotsIntoListPayload(payload: PayloadEnvelope): Promise<PayloadEnvelope> {
+  const snapshots = await loadWebQuotaSnapshots(payload.items.map((item) => item.auth_index));
+  if (!snapshots.size) {
+    return payload;
+  }
+  const items = payload.items.map((item) => mergeQuotaSnapshotIntoItem(item, snapshots.get(item.auth_index)));
+  return normalizePayload({
+    ...payload,
+    groups: buildGroupCounts(items),
+    items,
+  });
+}
+
+async function buildWebListPayload(records: WebAuthRecord[]): Promise<PayloadEnvelope> {
+  return mergeQuotaSnapshotsIntoListPayload(buildListPayload(records));
+}
+
+function buildQuotaSnapshotFromReport(report: WebQuotaReport, previous: QuotaSnapshotRecord | undefined): QuotaSnapshotRecord | null {
+  if (!report.auth_index) {
+    return null;
+  }
+  const freshQuota = hasFreshQuota(report);
+  return {
+    auth_index: report.auth_index,
+    name: report.name,
+    email: report.email,
+    status: report.status,
+    windows: freshQuota ? report.windows : (previous?.windows ?? report.windows),
+    additional_windows: freshQuota ? report.additional_windows : (previous?.additional_windows ?? report.additional_windows),
+    error: report.error,
+    timings_ms: report.timings_ms,
+    last_query_at: report.last_query_at,
+    quota_updated_at: freshQuota ? report.quota_updated_at : (previous?.quota_updated_at ?? null),
+  };
+}
+
+function mergeQuotaSnapshotIntoReport(report: WebQuotaReport, snapshot: QuotaSnapshotRecord): WebQuotaReport {
+  return {
+    ...report,
+    status: snapshot.status,
+    windows: snapshot.windows,
+    additional_windows: snapshot.additional_windows,
+    error: snapshot.error,
+    timings_ms: snapshot.timings_ms,
+    last_query_at: snapshot.last_query_at,
+    quota_updated_at: snapshot.quota_updated_at,
+  };
+}
+
+async function persistWebQuotaReports(reports: WebQuotaReport[]): Promise<WebQuotaReport[]> {
+  const previousSnapshots = await loadWebQuotaSnapshots(reports.map((report) => report.auth_index));
+  return Promise.all(
+    reports.map(async (report) => {
+      const snapshot = buildQuotaSnapshotFromReport(report, previousSnapshots.get(report.auth_index));
+      if (!snapshot) {
+        return report;
+      }
+      await saveWebQuotaSnapshot(snapshot);
+      return mergeQuotaSnapshotIntoReport(report, snapshot);
+    }),
+  );
+}
+
 function buildManagementUrl(config: RuntimeConfig, path: string, query?: Record<string, string>): string {
   const baseUrl = config.cpaBaseUrl.trim();
   if (!baseUrl) {
@@ -431,15 +535,35 @@ function buildManagementHeaders(config: RuntimeConfig, contentType?: string): He
 }
 
 async function fetchManagementText(config: RuntimeConfig, path: string, init: RequestInit = {}, query?: Record<string, string>): Promise<string> {
-  const response = await fetch(buildManagementUrl(config, path, query), {
-    ...init,
-    headers: init.headers ?? buildManagementHeaders(config),
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(text.trim() || `CPA 管理接口调用失败，HTTP ${response.status}`);
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  let didTimeout = false;
+  const timeoutId = controller
+    ? setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+      }, WEB_MANAGEMENT_FETCH_TIMEOUT_MS)
+    : null;
+  try {
+    const response = await fetch(buildManagementUrl(config, path, query), {
+      ...init,
+      headers: init.headers ?? buildManagementHeaders(config),
+      signal: init.signal ?? controller?.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(text.trim() || `CPA 管理接口调用失败，HTTP ${response.status}`);
+    }
+    return text;
+  } catch (error) {
+    if (didTimeout || (error instanceof DOMException && error.name === "AbortError")) {
+      throw new Error(`CPA 管理接口请求超时（${Math.round(WEB_MANAGEMENT_FETCH_TIMEOUT_MS / 1000)} 秒）`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
-  return text;
 }
 
 async function fetchManagementJson(config: RuntimeConfig, path: string, init: RequestInit = {}, query?: Record<string, string>): Promise<Record<string, unknown>> {
@@ -652,11 +776,17 @@ async function queryWebRecord(config: RuntimeConfig, input: WebAuthRecord): Prom
     error: "",
     timings_ms: {},
     last_query_at: null,
+    quota_updated_at: null,
   };
   const finalize = () => {
+    const queriedAt = new Date().toISOString();
     report.timings_ms.query_total_ms = Math.round((performance.now() - startedAt) * 10) / 10;
     report.status = deriveDesktopStatus(report);
-    report.last_query_at = new Date().toISOString();
+    report.last_query_at = queriedAt;
+    const quotaResetLabel = readPrimaryQuotaResetLabel(report.windows);
+    if (!report.error && quotaResetLabel) {
+      report.quota_updated_at = quotaResetLabel;
+    }
     return report;
   };
 
@@ -772,6 +902,21 @@ function readWebStorage<T>(primaryKey: string, legacyKeys: string[] = []): T | n
   } catch {
     return null;
   }
+}
+
+function readLegacyWebPayloadStorage(): PayloadEnvelope | null {
+  for (const key of [WEB_PAYLOAD_CACHE_KEY, LEGACY_WEB_PAYLOAD_CACHE_KEY]) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        continue;
+      }
+      return JSON.parse(raw) as PayloadEnvelope;
+    } catch {
+      // 单个旧缓存损坏不能阻止继续尝试其他 fallback key。
+    }
+  }
+  return null;
 }
 
 function writeWebStorage(key: string, value: unknown, legacyKeys: string[] = []): void {
@@ -896,7 +1041,7 @@ async function createProgressListener(
 
 export async function fetchAccountList(config: RuntimeConfig): Promise<PayloadEnvelope> {
   if (!isTauriRuntime()) {
-    return buildListPayload(await loadWebAuthRecords(normalizeRuntimeConfig(config)));
+    return buildWebListPayload(await loadWebAuthRecords(normalizeRuntimeConfig(config)));
   }
   return invokePayload("list", buildCommonArgs(config));
 }
@@ -908,7 +1053,8 @@ export async function queryCachedAccounts(
 ): Promise<PayloadEnvelope> {
   if (!isTauriRuntime()) {
     const normalizedConfig = normalizeRuntimeConfig(config);
-    return buildQueryPayload(await runWebQueries(normalizedConfig, buildAuthRecordsFromCachedItems(items), onProgress));
+    const reports = await runWebQueries(normalizedConfig, buildAuthRecordsFromCachedItems(items), onProgress);
+    return buildQueryPayload(await persistWebQuotaReports(reports));
   }
   return invokePayload("query-records", buildCommonArgs(config), JSON.stringify(buildCachedQueryItems(items)), onProgress);
 }
@@ -931,8 +1077,19 @@ export async function saveRuntimeConfig(config: RuntimeConfig): Promise<void> {
 
 export async function loadPayloadCache(): Promise<PayloadEnvelope | null> {
   if (!isTauriRuntime()) {
-    const payload = readWebStorage<PayloadEnvelope>(WEB_PAYLOAD_CACHE_KEY, [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
-    return payload ? normalizePayload(payload) : null;
+    const indexedDbPayload = await loadWebPayloadCache();
+    if (indexedDbPayload) {
+      return normalizePayload(indexedDbPayload);
+    }
+    const legacyPayload = readLegacyWebPayloadStorage();
+    if (!legacyPayload) {
+      return null;
+    }
+    const normalizedPayload = normalizePayload(legacyPayload);
+    if (await saveWebPayloadCache(normalizedPayload)) {
+      removeWebStorage(WEB_PAYLOAD_CACHE_KEY, [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
+    }
+    return normalizedPayload;
   }
   const payload = await invoke<unknown | null>("load_payload_cache");
   if (!payload) {
@@ -943,7 +1100,9 @@ export async function loadPayloadCache(): Promise<PayloadEnvelope | null> {
 
 export async function savePayloadCache(payload: PayloadEnvelope): Promise<void> {
   if (!isTauriRuntime()) {
-    writeWebStorage(WEB_PAYLOAD_CACHE_KEY, normalizePayload(payload), [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
+    if (await saveWebPayloadCache(normalizePayload(payload))) {
+      removeWebStorage(WEB_PAYLOAD_CACHE_KEY, [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
+    }
     return;
   }
   await invoke("save_payload_cache", { payload });
@@ -954,6 +1113,8 @@ export async function clearLocalCache(): Promise<void> {
     // 浏览器端把新旧命名空间都清掉，确保手工迁移前后的残留配置不会回流。
     removeWebStorage(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
     removeWebStorage(WEB_PAYLOAD_CACHE_KEY, [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
+    await clearWebPayloadCache();
+    await clearWebQuotaSnapshots();
     return;
   }
   await invoke("clear_local_cache");

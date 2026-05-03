@@ -21,7 +21,7 @@ export interface PlanNavItem {
   icon: string;
 }
 
-export type SortKey = "default" | "email" | "plan" | "status" | "priority" | "quota5h" | "quota7d" | "updatedAt";
+export type SortKey = "default" | "email" | "plan" | "status" | "priority" | "quota5h" | "quota7d" | "quotaUpdatedAt" | "updatedAt";
 export type SortDirection = "none" | "asc" | "desc";
 
 export interface SortState {
@@ -123,12 +123,20 @@ function readQuotaRemaining(item: AccountItem, id: string): number | null {
   return matched?.remaining_percent ?? null;
 }
 
-function readUpdatedAt(item: AccountItem): number | null {
-  if (!item.last_query_at) {
+function parseTimestamp(value: string | null | undefined): number | null {
+  if (!value) {
     return null;
   }
-  const timestamp = Date.parse(item.last_query_at);
+  const timestamp = Date.parse(value);
   return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function readUpdatedAt(item: AccountItem): number | null {
+  return parseTimestamp(item.last_query_at);
+}
+
+function readQuotaUpdatedAt(item: AccountItem): number | null {
+  return parseTimestamp(item.quota_updated_at ?? null);
 }
 
 function compareNullableNumber(left: number | null, right: number | null, direction: SortDirection): number {
@@ -164,6 +172,8 @@ export function sortItems(items: AccountItem[], sort: SortState): AccountItem[] 
         result = compareNullableNumber(readQuotaRemaining(left.item, "code-5h"), readQuotaRemaining(right.item, "code-5h"), sort.direction);
       } else if (sort.key === "quota7d") {
         result = compareNullableNumber(readQuotaRemaining(left.item, "code-7d"), readQuotaRemaining(right.item, "code-7d"), sort.direction);
+      } else if (sort.key === "quotaUpdatedAt") {
+        result = compareNullableNumber(readQuotaUpdatedAt(left.item), readQuotaUpdatedAt(right.item), sort.direction);
       } else if (sort.key === "updatedAt") {
         result = compareNullableNumber(readUpdatedAt(left.item), readUpdatedAt(right.item), sort.direction);
       }

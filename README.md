@@ -144,6 +144,40 @@ Web 端注意事项：
 - 如果某些浏览器仍然限制 `file://` 下的脚本或请求，优先使用 `npm run web:open`。
 - 浏览器直连异源 CPA 时，需要 CPA 或反向代理返回允许 CORS 的响应头。
 
+### Docker Compose
+
+仓库根目录提供了 `docker-compose.yml`，默认用于启动 Web 端开发服务：
+
+```bash
+docker compose up web
+```
+
+启动后打开：
+
+```text
+http://localhost:5173
+```
+
+如果要用接近构建产物的预览模式：
+
+```bash
+docker compose --profile preview up web-preview
+```
+
+预览模式端口为：
+
+```text
+http://localhost:9999
+```
+
+CLI 也可以通过 compose 按需运行，例如：
+
+```bash
+docker compose --profile cli run --rm cli query-all --cpa-base-url https://cpa.example/ --management-key <management-key> --json
+```
+
+Compose 只负责启动本项目的 Web/CLI 运行环境，不包含 CPA 服务端。Web 端仍然由浏览器直接请求 CPA，浏览器直连异源 CPA 时仍需要 CPA 或反向代理允许 CORS。
+
 ## 桌面端
 
 桌面端由前端工程、Tauri 壳层和 Python sidecar 共同组成。

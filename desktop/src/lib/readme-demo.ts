@@ -66,6 +66,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "",
       last_query_at: "2026-05-01T21:58:00+08:00",
+      quota_updated_at: "05-02 03:15",
     },
     {
       name: "codex-team-backup.json",
@@ -97,6 +98,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "",
       last_query_at: "2026-05-01T21:55:00+08:00",
+      quota_updated_at: "05-02 04:00",
     },
     {
       name: "codex-plus-demo.json",
@@ -128,6 +130,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "",
       last_query_at: "2026-05-01T21:46:00+08:00",
+      quota_updated_at: "05-02 00:40",
     },
     {
       name: "codex-free-demo.json",
@@ -159,6 +162,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "",
       last_query_at: "2026-05-01T21:41:00+08:00",
+      quota_updated_at: "05-02 01:05",
     },
     {
       name: "codex-pro-lite-demo.json",
@@ -190,6 +194,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "",
       last_query_at: "2026-05-01T21:50:00+08:00",
+      quota_updated_at: "05-02 02:10",
     },
     {
       name: "codex-pro-demo.json",
@@ -204,6 +209,7 @@ export const README_DEMO_PAYLOAD: PayloadEnvelope = {
       additional_windows: [],
       error: "演示模式使用的模拟错误，用于展示异常卡片与错误状态。",
       last_query_at: "2026-05-01T21:35:00+08:00",
+      quota_updated_at: null,
     },
   ],
   error: "",

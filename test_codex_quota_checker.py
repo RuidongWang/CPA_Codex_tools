@@ -380,6 +380,43 @@ class CodexQuotaCheckerTests(unittest.TestCase):
         self.assertEqual(payload["groups"]["by_status"]["error"], 1)
         self.assertEqual(payload["items"][0]["priority"], 99)
 
+    def test_build_query_payload_uses_5h_reset_label_as_quota_updated_at(self) -> None:
+        """额度更新时间列应取 5h 额度里的下次刷新时间。"""
+
+        reports = [
+            QuotaReport(
+                name="a.json",
+                email="a@example.com",
+                plan_type="free",
+                account_id="acct-a",
+                auth_index="idx-a",
+                status="",
+                priority=99,
+                windows=[
+                    QuotaWindow(
+                        id="code-5h",
+                        label="代码 5h",
+                        used_percent=0.0,
+                        remaining_percent=100.0,
+                        reset_label="05-03 18:53",
+                        exhausted=False,
+                    ),
+                    QuotaWindow(
+                        id="code-7d",
+                        label="代码 7d",
+                        used_percent=20.0,
+                        remaining_percent=80.0,
+                        reset_label="05-06 10:13",
+                        exhausted=False,
+                    ),
+                ],
+            )
+        ]
+
+        payload = build_query_payload(reports)
+
+        self.assertEqual(payload["items"][0]["quota_updated_at"], "05-03 18:53")
+
     def test_query_reports_runs_in_parallel_and_keeps_order(self) -> None:
         """批量查询应并发执行，同时保持返回顺序稳定。"""
 

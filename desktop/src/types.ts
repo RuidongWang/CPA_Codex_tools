@@ -54,6 +54,7 @@ export interface AccountItem {
   error: string;
   timings_ms?: Record<string, number>;
   last_query_at: string | null;
+  quota_updated_at: string | null;
 }
 
 export interface PayloadEnvelope {

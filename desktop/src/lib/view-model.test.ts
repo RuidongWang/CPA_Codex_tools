@@ -1,4 +1,22 @@
-import { buildOverviewStats } from "./view-model";
+import type { AccountItem } from "../types";
+import { buildOverviewStats, cycleSort, sortItems, type SortState } from "./view-model";
+
+function makeAccount(authIndex: string, quotaUpdatedAt: string | null): AccountItem {
+  return {
+    name: `${authIndex}.json`,
+    email: `${authIndex}@example.com`,
+    plan_type: "free",
+    account_id: `acct-${authIndex}`,
+    auth_index: authIndex,
+    priority: 99,
+    status: "healthy",
+    windows: [],
+    additional_windows: [],
+    error: "",
+    last_query_at: null,
+    quota_updated_at: quotaUpdatedAt,
+  };
+}
 
 describe("buildOverviewStats", () => {
   it("splits exhausted and error into separate buckets", () => {
@@ -15,6 +33,7 @@ describe("buildOverviewStats", () => {
         additional_windows: [],
         error: "",
         last_query_at: null,
+        quota_updated_at: null,
       },
       {
         name: "b.json",
@@ -28,6 +47,7 @@ describe("buildOverviewStats", () => {
         additional_windows: [],
         error: "",
         last_query_at: null,
+        quota_updated_at: null,
       },
       {
         name: "c.json",
@@ -41,10 +61,37 @@ describe("buildOverviewStats", () => {
         additional_windows: [],
         error: "bad request",
         last_query_at: null,
+        quota_updated_at: null,
       },
     ]);
 
     expect(stats.find((item) => item.label === "额度耗尽")?.value).toBe(1);
     expect(stats.find((item) => item.label === "查询异常")?.value).toBe(1);
+  });
+});
+
+describe("sortItems", () => {
+  it("sorts by quota updated time with empty values at the bottom", () => {
+    const items = [
+      makeAccount("missing", null),
+      makeAccount("later", "05-03 15:30"),
+      makeAccount("earlier", "05-03 08:15"),
+    ];
+
+    const asc = sortItems(items, { key: "quotaUpdatedAt", direction: "asc" });
+    const desc = sortItems(items, { key: "quotaUpdatedAt", direction: "desc" });
+
+    expect(asc.map((item) => item.auth_index)).toEqual(["earlier", "later", "missing"]);
+    expect(desc.map((item) => item.auth_index)).toEqual(["later", "earlier", "missing"]);
+  });
+});
+
+describe("cycleSort", () => {
+  it("cycles quota updated time sorting back to the default state", () => {
+    const key: Exclude<SortState["key"], "default"> = "quotaUpdatedAt";
+
+    expect(cycleSort({ key: "default", direction: "none" }, key)).toEqual({ key, direction: "asc" });
+    expect(cycleSort({ key, direction: "asc" }, key)).toEqual({ key, direction: "desc" });
+    expect(cycleSort({ key, direction: "desc" }, key)).toEqual({ key: "default", direction: "none" });
   });
 });

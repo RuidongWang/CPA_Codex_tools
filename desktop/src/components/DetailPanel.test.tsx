@@ -37,6 +37,7 @@ function buildItem(overrides: Partial<AccountItem> = {}): AccountItem {
     additional_windows: [],
     error: "",
     last_query_at: "2026-04-29T22:49:23+08:00",
+    quota_updated_at: "05-05 12:00",
     ...overrides,
   };
 }

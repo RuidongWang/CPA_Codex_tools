@@ -1,0 +1,67 @@
+name: cpa-codex-quota-mgt
+
+x-web-environment: &web-environment
+  TZ: Asia/Shanghai
+  CHOKIDAR_USEPOLLING: "true"
+
+services:
+  web:
+    image: node:20-bookworm-slim
+    working_dir: /workspace/desktop
+    init: true
+    environment:
+      <<: *web-environment
+      NODE_ENV: development
+    command: sh -c "npm ci && npm run web:dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./desktop:/workspace/desktop
+      - desktop_node_modules:/workspace/desktop/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  web-preview:
+    image: node:20-bookworm-slim
+    profiles:
+      - preview
+    working_dir: /workspace/desktop
+    init: true
+    environment:
+      <<: *web-environment
+      NODE_ENV: production
+    command: sh -c "npm ci && npm run web:build && npm run web:preview -- --host 0.0.0.0"
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./desktop:/workspace/desktop
+      - desktop_preview_node_modules:/workspace/desktop/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9999').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  cli:
+    image: python:3.11-slim
+    profiles:
+      - cli
+    working_dir: /workspace
+    init: true
+    environment:
+      TZ: Asia/Shanghai
+      PYTHONUNBUFFERED: "1"
+      PYTHONUTF8: "1"
+    entrypoint: ["python", "/workspace/codex_quota_checker.py"]
+    command: ["--help"]
+    volumes:
+      - .:/workspace
+
+volumes:
+  desktop_node_modules:
+  desktop_preview_node_modules:

@@ -20,6 +20,7 @@ function makeAccount(overrides: Partial<AccountItem> = {}): AccountItem {
     error: "",
     timings_ms: {},
     last_query_at: null,
+    quota_updated_at: null,
     ...overrides,
   };
 }
