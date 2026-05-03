@@ -1,9 +1,0 @@
-{
-  "name": "cpa-quota-desk-tauri-cli",
-  "private": true,
-  "version": "0.1.1",
-  "type": "module",
-  "dependencies": {
-    "@tauri-apps/cli": "^2.8.0"
-  }
-}

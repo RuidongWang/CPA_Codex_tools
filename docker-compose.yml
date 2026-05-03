@@ -7,7 +7,7 @@ x-web-environment: &web-environment
 services:
   web:
     image: node:20-bookworm-slim
-    working_dir: /workspace/desktop
+    working_dir: /workspace/web
     init: true
     environment:
       <<: *web-environment
@@ -16,8 +16,8 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ./desktop:/workspace/desktop
-      - desktop_node_modules:/workspace/desktop/node_modules
+      - ./web:/workspace/web
+      - web_node_modules:/workspace/web/node_modules
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
@@ -29,7 +29,7 @@ services:
     image: node:20-bookworm-slim
     profiles:
       - preview
-    working_dir: /workspace/desktop
+    working_dir: /workspace/web
     init: true
     environment:
       <<: *web-environment
@@ -38,8 +38,8 @@ services:
     ports:
       - "9999:9999"
     volumes:
-      - ./desktop:/workspace/desktop
-      - desktop_preview_node_modules:/workspace/desktop/node_modules
+      - ./web:/workspace/web
+      - web_preview_node_modules:/workspace/web/node_modules
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9999').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
@@ -47,21 +47,6 @@ services:
       retries: 12
       start_period: 90s
 
-  cli:
-    image: python:3.11-slim
-    profiles:
-      - cli
-    working_dir: /workspace
-    init: true
-    environment:
-      TZ: Asia/Shanghai
-      PYTHONUNBUFFERED: "1"
-      PYTHONUTF8: "1"
-    entrypoint: ["python", "/workspace/codex_quota_checker.py"]
-    command: ["--help"]
-    volumes:
-      - .:/workspace
-
 volumes:
-  desktop_node_modules:
-  desktop_preview_node_modules:
+  web_node_modules:
+  web_preview_node_modules:
