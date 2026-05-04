@@ -1,4 +1,4 @@
-import { DEFAULT_QUERY_CONCURRENCY, normalizePayload, normalizeRuntimeConfig } from "./api";
+import { DEFAULT_KEEPER_SETTINGS, DEFAULT_QUERY_CONCURRENCY, normalizePayload, normalizeRuntimeConfig } from "./api";
 
 // 先锁住后端 payload 的最小契约，避免界面层直接依赖松散原始结构。
 describe("normalizePayload", () => {
@@ -103,6 +103,27 @@ describe("normalizeRuntimeConfig", () => {
     });
 
     expect(config.queryConcurrency).toBe(DEFAULT_QUERY_CONCURRENCY);
+    expect(config.keeperSettings).toEqual(DEFAULT_KEEPER_SETTINGS);
     expect(config.priorityPlanOrder).toEqual(["team", "plus", "free", "pro 5x", "pro 20x", "unknown"]);
+  });
+
+  it("normalizes keeper settings into safe bounds", () => {
+    const config = normalizeRuntimeConfig({
+      cpaBaseUrl: "https://cpa.example/",
+      managementKey: "example-management-key",
+      keeperSettings: {
+        quotaThreshold: 180,
+        expiryThresholdDays: -1,
+        enableRefresh: false,
+        workerThreads: 0,
+      },
+    });
+
+    expect(config.keeperSettings).toEqual({
+      quotaThreshold: 100,
+      expiryThresholdDays: 0,
+      enableRefresh: false,
+      workerThreads: 1,
+    });
   });
 });

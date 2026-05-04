@@ -20,6 +20,7 @@
 
 - 统一查看 Codex 账号分组、额度状态、5h / 7d 剩余额度、优先级和查询状态。
 - 支持批量查询、单账号查询、批量下载账号配置和批量同步优先级。
+- 支持 Keeper 可视化监控，维护策略参考 [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)，可按策略演练或执行删除、禁用、启用和刷新维护动作。
 - 支持大账号量列表虚拟滚动，移动端自动切换为账号卡片。
 - 查询到的额度快照会持久化到 IndexedDB，再次加载账号列表时自动回填。
 - 表格中的 `额度更新时间` 取自接口 body 中 `rate_limit.primary_window.reset_at` 对应的下一次刷新时间。
@@ -86,6 +87,7 @@ Web 端位于 `web/`，由 React、TypeScript 和 Vite 构建。
 - 浏览器直接请求 CPA Management API。
 - CPA 或前置反向代理需要允许本地 Web 页面跨域访问。
 - 浏览器下载账号配置 JSON，不需要配置本地备份路径。
+- Keeper 维护策略在设置面板中配置，支持禁用阈值、过期阈值、维护并发和自动刷新开关。
 - 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务。
 
 环境要求：
@@ -179,8 +181,13 @@ Web 端本地缓存使用两类浏览器存储：
 - 按账号读取 Codex 额度信息。
 - 批量下载账号配置。
 - 批量更新账号优先级。
+- 设置账号启用/禁用状态。
+- 删除无效或不可用账号。
+- 通过 `api-call` 代理 OpenAI OAuth refresh，并上传更新后的账号配置。
 
 额度信息中的下一次刷新时间取自响应 body 里的 `reset_at`，并格式化为界面中的 `下次刷新 MM-DD HH:mm`。
+
+Keeper 维护逻辑参考 [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)。当前 Web 端不会直接从浏览器请求 OAuth refresh，而是通过 CPA `api-call` 代理刷新并回写账号文件。
 
 ## 开发与验证
 
@@ -231,11 +238,12 @@ docker compose config
 主要代码边界：
 
 - `web/src/App.tsx` 负责主状态机、加载、查询、下载和同步流程。
-- `web/src/lib/api.ts` 负责浏览器端 CPA 请求、数据归一化、下载和额度快照持久化。
+- `web/src/lib/api.ts` 负责浏览器端 CPA 请求、数据归一化、下载、Keeper 维护和额度快照持久化。
 - `web/src/components/` 放账号表格、工具条、设置面板、进度面板和优先级弹层。
 - `docker-compose.yml` 提供本地 Web 开发和预览服务。
 
 ## 参考
 
 - [CPA Codex Tools GitHub 仓库](https://github.com/RuidongWang/CPA_Codex_tools)
+- [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI/)

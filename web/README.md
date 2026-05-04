@@ -54,6 +54,17 @@ web-server.config.ts
 - “清空本地缓存”会清理当前浏览器内保存的 Web 端缓存。
 - 账号配置通过浏览器下载 JSON 文件，不需要配置本地路径。
 
+## Keeper
+
+Keeper 监控区提供账号维护演练和执行入口，策略在设置面板中配置：
+
+- 禁用阈值百分比
+- 过期阈值天数
+- 维护并发数
+- 自动刷新开关
+
+维护逻辑参考 [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)。当前 Web 端支持删除、禁用、启用和刷新：执行维护时会通过 CPA `api-call` 代理 OAuth refresh，再把更新后的账号 JSON 上传回 CPA。
+
 ## 测试
 
 ```bash

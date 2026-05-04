@@ -1,10 +1,6 @@
 import type { Ref } from "react";
-import { DEFAULT_CPA_BASE_URL } from "../lib/api";
-import type { RuntimeConfig } from "../types";
 
 interface ToolbarProps {
-  config: RuntimeConfig;
-  search: string;
   loadingLabel: string;
   lastUpdated: string;
   backupLabel: string;
@@ -14,13 +10,10 @@ interface ToolbarProps {
   canDiscardPriorityDrafts: boolean;
   canSyncPriorities: boolean;
   isBusy: boolean;
-  busyMode: "idle" | "bootstrap" | "list" | "query-one" | "download" | "sync";
+  busyMode: "idle" | "bootstrap" | "list" | "query-one" | "download" | "sync" | "keeper";
   selectedStatus: string;
-  statusCounts: Record<string, number>;
   selectedCount: number;
   rootRef?: Ref<HTMLElement>;
-  onConfigChange: (field: "cpaBaseUrl" | "managementKey", value: string) => void;
-  onSearchChange: (value: string) => void;
   onOpenPriorityBatch: () => void;
   onBackupAccounts: () => void;
   onLoadAccounts: () => void;
@@ -29,14 +22,14 @@ interface ToolbarProps {
   onSyncPriorities: () => void;
 }
 
-const STATUS_FILTERS = [
-  { key: "all", label: "全部" },
-  { key: "healthy", label: "正常" },
-  { key: "low", label: "偏低" },
-  { key: "exhausted", label: "耗尽" },
-  { key: "error", label: "异常" },
-  { key: "unknown", label: "未查" },
-];
+const STATUS_LABELS: Record<string, string> = {
+  all: "全部状态",
+  healthy: "正常",
+  low: "偏低",
+  exhausted: "耗尽",
+  error: "异常",
+  unknown: "未查",
+};
 
 function buildBusyCopy(mode: ToolbarProps["busyMode"], label: string): string {
   if (mode === "query-one") {
@@ -47,6 +40,9 @@ function buildBusyCopy(mode: ToolbarProps["busyMode"], label: string): string {
   }
   if (mode === "sync") {
     return label || "正在同步优先级";
+  }
+  if (mode === "keeper") {
+    return label || "正在执行 Keeper 维护";
   }
   if (mode === "list" || mode === "bootstrap") {
     return label || "正在加载账号列表";
@@ -60,49 +56,18 @@ export function Toolbar(props: ToolbarProps) {
   const currentViewLabel =
     props.selectedStatus === "all"
       ? "当前视图 全部状态"
-      : `当前视图 ${STATUS_FILTERS.find((item) => item.key === props.selectedStatus)?.label ?? props.selectedStatus}`;
+      : `当前视图 ${STATUS_LABELS[props.selectedStatus] ?? props.selectedStatus}`;
   const lastUpdatedLabel = props.lastUpdated ? `最近更新 ${props.lastUpdated}` : "尚未查询";
 
   return (
     <section ref={props.rootRef} className="command-bar">
-      <p className="panel-heading__eyebrow">操作台</p>
-      <div className="command-bar__meta">
-        <span className={props.isBusy ? "command-bar__status command-bar__status--busy" : "command-bar__status"}>{busyCopy}</span>
-        <span>{currentViewLabel}</span>
-        <span>{lastUpdatedLabel}</span>
-      </div>
-      <div className="command-bar__inputs">
-        <label className="command-field">
-          <span className="material-symbols-outlined">link</span>
-          <input
-            className="command-field__input"
-            value={props.config.cpaBaseUrl}
-            disabled={props.isBusy}
-            onChange={(event) => props.onConfigChange("cpaBaseUrl", event.target.value)}
-            placeholder={DEFAULT_CPA_BASE_URL}
-          />
-        </label>
-        <label className="command-field">
-          <span className="material-symbols-outlined">key</span>
-          <input
-            className="command-field__input"
-            type="password"
-            value={props.config.managementKey}
-            disabled={props.isBusy}
-            onChange={(event) => props.onConfigChange("managementKey", event.target.value)}
-            placeholder="输入管理密钥"
-          />
-        </label>
-        <label className="command-field command-field--search">
-          <span className="material-symbols-outlined">search</span>
-          <input
-            className="command-field__input"
-            value={props.search}
-            disabled={props.isBusy}
-            onChange={(event) => props.onSearchChange(event.target.value)}
-            placeholder="按邮箱搜索"
-          />
-        </label>
+      <div className="command-bar__header">
+        <p className="panel-heading__eyebrow">操作台</p>
+        <div className="command-bar__meta">
+          <span className={props.isBusy ? "command-bar__status command-bar__status--busy" : "command-bar__status"}>{busyCopy}</span>
+          <span>{currentViewLabel}</span>
+          <span>{lastUpdatedLabel}</span>
+        </div>
       </div>
       <div className="command-bar__actions">
         <div className="command-bar__action-group">
@@ -151,26 +116,6 @@ export function Toolbar(props: ToolbarProps) {
           >
             {props.busyMode === "sync" ? "同步中" : "同步到远端"}
           </button>
-        </div>
-      </div>
-      <div className="command-bar__footer">
-        <div className="status-summary" aria-label="状态摘要">
-          {STATUS_FILTERS.map((item) => {
-            const count =
-              item.key === "all"
-                ? Object.values(props.statusCounts).reduce((sum, value) => sum + value, 0)
-                : (props.statusCounts[item.key] ?? 0);
-            return (
-              <span
-                key={item.key}
-                className={props.selectedStatus === item.key ? "status-summary__pill status-summary__pill--active" : "status-summary__pill"}
-              >
-                <span className={`status-summary__dot status-summary__dot--${item.key}`} aria-hidden="true" />
-                <span>{item.label}</span>
-                <strong>{count}</strong>
-              </span>
-            );
-          })}
         </div>
       </div>
     </section>

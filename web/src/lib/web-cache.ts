@@ -16,6 +16,7 @@ export interface QuotaSnapshotRecord {
   auth_index: string;
   name: string;
   email: string;
+  expired: string | null;
   status: AccountItem["status"];
   windows: AccountItem["windows"];
   additional_windows: AccountItem["additional_windows"];
@@ -118,6 +119,7 @@ function readQuotaSnapshotRecord(record: unknown): QuotaSnapshotRecord | null {
     auth_index: authIndex,
     name: cleanString(raw.name),
     email: cleanString(raw.email),
+    expired: normalizeTimestamp(raw.expired),
     status: normalizeStatus(raw.status),
     windows: Array.isArray(raw.windows) ? (raw.windows as AccountItem["windows"]) : [],
     additional_windows: Array.isArray(raw.additional_windows) ? (raw.additional_windows as AccountItem["additional_windows"]) : [],

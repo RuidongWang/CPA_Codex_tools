@@ -12,7 +12,15 @@ export interface RuntimeConfig {
   cpaBaseUrl: string;
   managementKey: string;
   queryConcurrency: number;
+  keeperSettings: KeeperSettings;
   priorityPlanOrder: PriorityPlanKey[];
+}
+
+export interface KeeperSettings {
+  quotaThreshold: number;
+  expiryThresholdDays: number;
+  enableRefresh: boolean;
+  workerThreads: number;
 }
 
 export interface MetaSummary {
@@ -47,6 +55,9 @@ export interface AccountItem {
   remote_priority?: number | null;
   draft_priority?: number | null;
   dirty_priority?: boolean;
+  disabled?: boolean;
+  expired?: string;
+  has_refresh_token?: boolean;
   status: "healthy" | "low" | "exhausted" | "error" | "unknown";
   windows: QuotaWindow[];
   additional_windows: QuotaWindow[];
@@ -54,6 +65,51 @@ export interface AccountItem {
   timings_ms?: Record<string, number>;
   last_query_at: string | null;
   quota_updated_at: string | null;
+}
+
+export type KeeperAction = "none" | "delete" | "disable" | "enable" | "refresh" | "refresh-candidate" | "skip" | "error";
+export type KeeperDirectAction = "disable" | "refresh" | "delete";
+export type KeeperOutcome = "alive" | "dead" | "skipped" | "network_error" | "error";
+
+export interface KeeperItemReport {
+  name: string;
+  email: string;
+  auth_index: string;
+  plan_type: string;
+  disabled: boolean | null;
+  expired: string;
+  remaining_label: string;
+  has_refresh_token: boolean;
+  primary_label: string;
+  primary_used_percent: number | null;
+  secondary_label: string;
+  secondary_used_percent: number | null;
+  action: KeeperAction;
+  outcome: KeeperOutcome;
+  applied: boolean;
+  refresh_candidate: boolean;
+  refreshed: boolean;
+  reason: string;
+}
+
+export interface KeeperRunSummary {
+  generated_at: string;
+  dry_run: boolean;
+  total: number;
+  alive: number;
+  dead: number;
+  disabled: number;
+  enabled: number;
+  refreshed: number;
+  refresh_candidates: number;
+  skipped: number;
+  network_error: number;
+  errors: number;
+}
+
+export interface KeeperRunResult {
+  summary: KeeperRunSummary;
+  items: KeeperItemReport[];
 }
 
 export interface PayloadEnvelope {

@@ -21,7 +21,7 @@ export interface PlanNavItem {
   icon: string;
 }
 
-export type SortKey = "default" | "email" | "plan" | "status" | "priority" | "quota5h" | "quota7d" | "quotaUpdatedAt" | "updatedAt";
+export type SortKey = "default" | "email" | "plan" | "status" | "priority" | "quota5h" | "quota7d" | "quotaUpdatedAt" | "expiredAt" | "updatedAt";
 export type SortDirection = "none" | "asc" | "desc";
 
 export interface SortState {
@@ -139,6 +139,10 @@ function readQuotaUpdatedAt(item: AccountItem): number | null {
   return parseTimestamp(item.quota_updated_at ?? null);
 }
 
+function readExpiredAt(item: AccountItem): number | null {
+  return parseTimestamp(item.expired ?? null);
+}
+
 function compareNullableNumber(left: number | null, right: number | null, direction: SortDirection): number {
   if (left === null && right === null) {
     return 0;
@@ -174,6 +178,8 @@ export function sortItems(items: AccountItem[], sort: SortState): AccountItem[] 
         result = compareNullableNumber(readQuotaRemaining(left.item, "code-7d"), readQuotaRemaining(right.item, "code-7d"), sort.direction);
       } else if (sort.key === "quotaUpdatedAt") {
         result = compareNullableNumber(readQuotaUpdatedAt(left.item), readQuotaUpdatedAt(right.item), sort.direction);
+      } else if (sort.key === "expiredAt") {
+        result = compareNullableNumber(readExpiredAt(left.item), readExpiredAt(right.item), sort.direction);
       } else if (sort.key === "updatedAt") {
         result = compareNullableNumber(readUpdatedAt(left.item), readUpdatedAt(right.item), sort.direction);
       }

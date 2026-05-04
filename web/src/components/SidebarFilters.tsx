@@ -1,40 +1,52 @@
-import { PLAN_NAV_ITEMS } from "../lib/view-model";
+export type SidebarPage = "quota" | "config" | "keeper";
 
 interface SidebarFiltersProps {
-  planCounts: Record<string, number>;
-  selectedPlan: string;
-  onPlanChange: (plan: string) => void;
+  activePage: SidebarPage;
+  onPageChange: (page: SidebarPage) => void;
+  accountCount: number;
 }
 
-// 左侧导航直接沿用计划原始分组名，避免和后端口径出现二次映射。
-export function SidebarFilters(props: SidebarFiltersProps) {
-  const allCount = Object.values(props.planCounts).reduce((sum, count) => sum + count, 0);
+const PAGE_NAV_ITEMS: Array<{ key: SidebarPage; label: string; icon: string }> = [
+  { key: "quota", label: "额度", icon: "monitoring" },
+  { key: "config", label: "配置", icon: "tune" },
+  { key: "keeper", label: "Keeper", icon: "shield" },
+];
 
+function pageAriaLabel(page: SidebarPage): string {
+  if (page === "quota") {
+    return "额度页面";
+  }
+  if (page === "config") {
+    return "配置页面";
+  }
+  return "Keeper页面";
+}
+
+export function SidebarFilters(props: SidebarFiltersProps) {
   return (
     <aside className="rail">
       <div className="rail__brand" aria-hidden="true">
         <span className="material-symbols-outlined">monitoring</span>
         <span className="rail__brand-mark">CPA OPS</span>
       </div>
-      <div className="rail__nav">
-        {PLAN_NAV_ITEMS.map((item) => {
-          const count = item.key === "all" ? allCount : (props.planCounts[item.key] ?? 0);
-          const active = props.selectedPlan === item.key;
+      <nav className="rail__pages" aria-label="页面导航">
+        {PAGE_NAV_ITEMS.map((item) => {
+          const active = props.activePage === item.key;
           return (
             <button
               key={item.key}
               type="button"
-              aria-label={item.key}
+              aria-label={pageAriaLabel(item.key)}
               className={active ? "rail-button rail-button--active" : "rail-button"}
-              onClick={() => props.onPlanChange(item.key)}
+              onClick={() => props.onPageChange(item.key)}
             >
               <span className="material-symbols-outlined">{item.icon}</span>
               <span className="rail-button__label">{item.label}</span>
-              <span className="rail-button__count">{count}</span>
+              <span className="rail-button__count">{props.accountCount}</span>
             </button>
           );
         })}
-      </div>
+      </nav>
     </aside>
   );
 }

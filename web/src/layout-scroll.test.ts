@@ -10,10 +10,6 @@ function readRuleBlock(pattern: RegExp): string {
   return match?.[1] ?? "";
 }
 
-function readRuleBlocks(pattern: RegExp): string[] {
-  return Array.from(styles.matchAll(pattern)).map((match) => match[1] ?? "");
-}
-
 describe("layout scroll contract", () => {
   it("keeps page scroll locked and delegates overflow to the account list panel", () => {
     const rootBlock = readRuleBlock(/html,\s*body,\s*#root\s*\{([\s\S]*?)\}/m);
@@ -26,7 +22,6 @@ describe("layout scroll contract", () => {
     const contentBlock = readRuleBlock(/\.stitch-content\s*\{([\s\S]*?)\}/m);
     const gridPanelBlock = readRuleBlock(/\.grid-panel\s*\{([\s\S]*?)\}/m);
     const gridPanelBodyBlock = readRuleBlock(/\.grid-panel__body\s*\{([\s\S]*?)\}/m);
-    const detailPanelBlocks = readRuleBlocks(/\.detail-panel\s*\{([\s\S]*?)\}/gm);
     const settingsBackdropBlock = readRuleBlock(/\.settings-dialog__backdrop\s*\{([\s\S]*?)\}/m);
 
     expect(rootBlock).toMatch(/height:\s*100%/);
@@ -47,13 +42,42 @@ describe("layout scroll contract", () => {
     expect(contentBlock).toMatch(/overflow:\s*hidden/);
     expect(gridPanelBlock).toMatch(/overflow:\s*hidden/);
     expect(gridPanelBodyBlock).toMatch(/overflow:\s*auto/);
-    expect(detailPanelBlocks.some((block) => /overflow:\s*auto/.test(block))).toBe(true);
     expect(settingsBackdropBlock).toMatch(/z-index:\s*12/);
   });
 
-  it("keeps the main content table-first with a narrower fixed detail rail", () => {
+  it("keeps the main content table full width without the account detail sidebar", () => {
     const contentBlock = readRuleBlock(/\.stitch-content\s*\{([\s\S]*?)\}/m);
 
-    expect(contentBlock).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+248px/);
+    expect(contentBlock).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    expect(contentBlock).not.toMatch(/360px/);
+  });
+
+  it("lets Keeper page panels fill the available workspace width", () => {
+    const keeperPanelBlock = readRuleBlock(/\.keeper-page\s+\.keeper-panel\s*\{([\s\S]*?)\}/m);
+    const keeperGridPanelBlock = readRuleBlock(/\.keeper-page\s+\.grid-panel\s*\{([\s\S]*?)\}/m);
+    const keeperSelectedActionsBlock = readRuleBlock(/\.keeper-selected-actions\s*\{([\s\S]*?)\}/m);
+
+    expect(keeperPanelBlock).toMatch(/width:\s*100%/);
+    expect(keeperGridPanelBlock).toMatch(/width:\s*100%/);
+    expect(keeperSelectedActionsBlock).toMatch(/width:\s*100%/);
+    expect(keeperPanelBlock).not.toMatch(/max-width:\s*1280px/);
+    expect(keeperGridPanelBlock).not.toMatch(/max-width:\s*1280px/);
+    expect(keeperSelectedActionsBlock).not.toMatch(/max-width:\s*1280px/);
+  });
+
+  it("keeps Keeper summary stat cards on one desktop row", () => {
+    const keeperStatsBlock = readRuleBlock(/\.keeper-panel__stats\s*\{([\s\S]*?)\}\s*\.keeper-panel__stats span/m);
+
+    expect(keeperStatsBlock).toMatch(/grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\)/);
+  });
+
+  it("aligns Keeper selected action icons with button text", () => {
+    const actionButtonBlock = readRuleBlock(/\.keeper-selected-actions__buttons\s+\.command-button\s*\{([\s\S]*?)\}/m);
+    const actionIconBlock = readRuleBlock(/\.keeper-selected-actions__buttons\s+\.material-symbols-outlined\s*\{([\s\S]*?)\}/m);
+
+    expect(actionButtonBlock).toMatch(/display:\s*inline-flex/);
+    expect(actionButtonBlock).toMatch(/align-items:\s*center/);
+    expect(actionButtonBlock).toMatch(/justify-content:\s*center/);
+    expect(actionIconBlock).toMatch(/line-height:\s*1/);
   });
 });

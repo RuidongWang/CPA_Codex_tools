@@ -1,22 +1,27 @@
 import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
 import { AccountTable } from "./components/AccountTable";
-import { DetailPanel } from "./components/DetailPanel";
+import { ConnectionConfigPanel } from "./components/ConnectionConfigPanel";
 import { OverviewCards } from "./components/OverviewCards";
+import { KeeperPanel } from "./components/KeeperPanel";
+import { PlanFilterBar } from "./components/PlanFilterBar";
 import { PriorityBatchPanel } from "./components/PriorityBatchPanel";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { SidebarFilters } from "./components/SidebarFilters";
+import { SidebarFilters, type SidebarPage } from "./components/SidebarFilters";
 import { SyncConfirmDialog } from "./components/SyncConfirmDialog";
 import { Toolbar } from "./components/Toolbar";
 import { WindowChrome } from "./components/WindowChrome";
 import {
   clearLocalCache,
+  DEFAULT_KEEPER_SETTINGS,
   DEFAULT_QUERY_CONCURRENCY,
   downloadSelectedAccounts,
   fetchAccountList,
   loadPayloadCache,
   loadRuntimeConfig,
   queryCachedAccounts,
+  runKeeperDirectAction,
+  runKeeperMaintenance,
   savePayloadCache,
   saveRuntimeConfig,
   syncAccountPriorities,
@@ -28,9 +33,9 @@ import {
   normalizePriorityPlanKey,
   PRIORITY_PLAN_KEYS,
 } from "./lib/priority";
-import { buildOverviewStats, buildPlanCounts, buildStatusCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
+import { buildOverviewStats, buildPlanCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
 import { isReadmeDemoMode, README_DEMO_CONFIG, README_DEMO_PAYLOAD } from "./lib/readme-demo";
-import type { PayloadEnvelope, RuntimeConfig } from "./types";
+import type { KeeperDirectAction, KeeperRunResult, KeeperSettings, PayloadEnvelope, RuntimeConfig } from "./types";
 
 const PROGRESS_HOLD_MS = 2000;
 const PROGRESS_FADE_MS = 240;
@@ -42,6 +47,7 @@ const EMPTY_CONFIG: RuntimeConfig = {
   cpaBaseUrl: "",
   managementKey: "",
   queryConcurrency: DEFAULT_QUERY_CONCURRENCY,
+  keeperSettings: DEFAULT_KEEPER_SETTINGS,
   priorityPlanOrder: PRIORITY_PLAN_KEYS,
 };
 
@@ -105,7 +111,7 @@ interface ProgressState {
   elapsedLabel: string;
 }
 
-type BusyMode = "idle" | "bootstrap" | "list" | "query-one" | "download" | "sync";
+type BusyMode = "idle" | "bootstrap" | "list" | "query-one" | "download" | "sync" | "keeper";
 
 function areSameProgressTask(left: ProgressState, right: ProgressState): boolean {
   return left.title === right.title && left.total === right.total;
@@ -135,6 +141,7 @@ export default function App() {
   const [config, setConfig] = useState<RuntimeConfig>(EMPTY_CONFIG);
   const [payload, setPayload] = useState<PayloadEnvelope | null>(null);
   const [selectedPlan, setSelectedPlan] = useState("all");
+  const [activePage, setActivePage] = useState<SidebarPage>("quota");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [search, setSearch] = useState("");
   const [selectedAuthIndex, setSelectedAuthIndex] = useState("");
@@ -152,6 +159,7 @@ export default function App() {
   const [priorityBatchOpen, setPriorityBatchOpen] = useState(false);
   const [priorityBatchSaving, setPriorityBatchSaving] = useState(false);
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  const [keeperResult, setKeeperResult] = useState<KeeperRunResult | null>(null);
   const [sortState, setSortState] = useState<SortState>({ key: "default", direction: "none" });
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, number>>({});
   const [lastDraftChangeAt, setLastDraftChangeAt] = useState<number | null>(null);
@@ -315,6 +323,10 @@ export default function App() {
   }, []);
 
   const allItems = payload?.items ?? [];
+  const effectiveConfig: RuntimeConfig = {
+    ...config,
+    keeperSettings: config.keeperSettings ?? DEFAULT_KEEPER_SETTINGS,
+  };
   const draftedItems = applyPriorityDrafts(allItems, priorityDrafts);
   const filteredItems = filterItems(draftedItems, {
     plan: selectedPlan,
@@ -322,14 +334,16 @@ export default function App() {
     query: deferredSearch,
   });
   const visibleItems = sortItems(filteredItems, sortState);
+  const keeperItems = sortItems(draftedItems, sortState);
   const selectedAuthIndexes = selectedAuthIndexesByPlan[selectedPlan] ?? [];
+  const keeperSelectedAuthIndexes = selectedAuthIndexesByPlan.all ?? [];
+  const keeperSelectedItems = keeperItems.filter((item) => keeperSelectedAuthIndexes.includes(item.auth_index));
+  const keeperSelectedCount = keeperSelectedItems.length;
   // 下载动作优先吃当前勾选集合，没勾选时才退回全量下载。
   const selectedBackupItems = selectedAuthIndexes.length
     ? allItems.filter((item) => selectedAuthIndexes.includes(item.auth_index))
     : allItems;
-  const selectedItem = visibleItems.find((item) => item.auth_index === selectedAuthIndex) ?? null;
   const planCounts = buildPlanCounts(allItems);
-  const statusCounts = buildStatusCounts(allItems);
   const overviewStats = buildOverviewStats(visibleItems);
   const priorityCounts = buildPriorityPlanCounts(allItems);
   const isBusy = busyMode !== "idle";
@@ -346,11 +360,13 @@ export default function App() {
     ? `下载选中 (${selectedCount})`
     : "下载所有账号";
 
+  const selectableItems = activePage === "keeper" ? keeperItems : visibleItems;
+
   useEffect(() => {
-    if (selectedAuthIndex && !visibleItems.some((item) => item.auth_index === selectedAuthIndex)) {
+    if (selectedAuthIndex && !selectableItems.some((item) => item.auth_index === selectedAuthIndex)) {
       setSelectedAuthIndex("");
     }
-  }, [selectedAuthIndex, visibleItems]);
+  }, [selectedAuthIndex, selectableItems]);
 
   function patchConfig(field: "cpaBaseUrl" | "managementKey", value: string) {
     setConfig((current) => ({
@@ -456,6 +472,7 @@ export default function App() {
     setPriorityDrafts({});
     setLastDraftChangeAt(null);
     setLastBackupAt(null);
+    setKeeperResult(null);
     setPriorityBatchOpen(false);
     setSyncConfirmOpen(false);
   }
@@ -480,6 +497,15 @@ export default function App() {
     });
   }
 
+  function toggleKeeperAccountSelection(authIndex: string, checked: boolean) {
+    updateSelectionsForPlan("all", (current) => {
+      if (checked) {
+        return current.includes(authIndex) ? current : [...current, authIndex];
+      }
+      return current.filter((item) => item !== authIndex);
+    });
+  }
+
   function toggleVisibleSelections(checked: boolean) {
     const visibleAuthIndexes = visibleItems.map((item) => item.auth_index);
     updateSelectionsForPlan(selectedPlan, (current) => {
@@ -487,6 +513,16 @@ export default function App() {
         return Array.from(new Set([...current, ...visibleAuthIndexes]));
       }
       return current.filter((item) => !visibleAuthIndexes.includes(item));
+    });
+  }
+
+  function toggleKeeperVisibleSelections(checked: boolean) {
+    const keeperAuthIndexes = keeperItems.map((item) => item.auth_index);
+    updateSelectionsForPlan("all", (current) => {
+      if (checked) {
+        return Array.from(new Set([...current, ...keeperAuthIndexes]));
+      }
+      return current.filter((item) => !keeperAuthIndexes.includes(item));
     });
   }
 
@@ -612,7 +648,7 @@ export default function App() {
     );
   }
 
-  async function handleSaveSettings(settings: { queryConcurrency: number }) {
+  async function handleSaveSettings(settings: { queryConcurrency: number; keeperSettings: KeeperSettings }) {
     const nextConfig = {
       ...config,
       ...settings,
@@ -629,6 +665,216 @@ export default function App() {
       setLoadingLabel("设置保存失败");
     } finally {
       setSettingsSaving(false);
+    }
+  }
+
+  async function handleSaveConnectionConfig() {
+    const nextConfig = effectiveConfig;
+    setSettingsSaving(true);
+    setConfig(nextConfig);
+    try {
+      await saveRuntimeConfig(nextConfig);
+      setErrorMessage("");
+      setLoadingLabel("连接配置已保存");
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "保存连接配置失败"));
+      setLoadingLabel("连接配置保存失败");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
+  async function handleSaveKeeperSettings(keeperSettings: KeeperSettings) {
+    await handleSaveSettings({
+      queryConcurrency: effectiveConfig.queryConcurrency,
+      keeperSettings,
+    });
+  }
+
+  function handlePlanChange(plan: string) {
+    setSelectedPlan(plan);
+    setActivePage("quota");
+  }
+
+  function formatKeeperSuccessLabel(result: KeeperRunResult): string {
+    const prefix = result.summary.dry_run ? "Keeper 演练完成" : "Keeper 维护完成";
+    return `${prefix}：删除 ${result.summary.dead}，禁用 ${result.summary.disabled}，启用 ${result.summary.enabled}，刷新 ${result.summary.refreshed}`;
+  }
+
+  function getKeeperDirectActionTitle(action: KeeperDirectAction): string {
+    if (action === "disable") {
+      return "设置禁用进度";
+    }
+    if (action === "refresh") {
+      return "刷新证书进度";
+    }
+    return "删除证书进度";
+  }
+
+  function getKeeperDirectActionStartLabel(action: KeeperDirectAction): string {
+    if (action === "disable") {
+      return "正在禁用选中证书";
+    }
+    if (action === "refresh") {
+      return "正在刷新选中证书";
+    }
+    return "正在删除选中证书";
+  }
+
+  function formatKeeperDirectActionSuccessLabel(action: KeeperDirectAction, result: KeeperRunResult): string {
+    const errors = result.summary.errors + result.summary.network_error;
+    const count =
+      action === "disable"
+        ? result.summary.disabled
+        : action === "refresh"
+          ? result.summary.refreshed
+          : result.summary.dead;
+    const verb = action === "disable" ? "禁用" : action === "refresh" ? "刷新" : "删除";
+    if (errors > 0) {
+      return `${verb}证书完成：成功 ${count}，异常 ${errors}`;
+    }
+    return `已${verb} ${count} 个选中证书`;
+  }
+
+  async function handleRunKeeper(dryRun: boolean) {
+    if (!readyToQuery) {
+      setLoadingLabel("请先填写 CPA 地址和管理密钥");
+      return;
+    }
+    if (!allItems.length) {
+      setLoadingLabel("请先加载账号列表");
+      return;
+    }
+    const startedAt = performance.now();
+    const title = dryRun ? "Keeper 演练进度" : "Keeper 维护进度";
+    try {
+      setErrorMessage("");
+      clearProgress();
+      setBusyMode("keeper");
+      setLoadingLabel(dryRun ? "正在演练 Keeper 维护" : "正在执行 Keeper 维护");
+      showProgress({
+        title,
+        completed: 0,
+        total: allItems.length,
+        currentLabel: `共 ${allItems.length} 个账号`,
+        elapsedLabel: "",
+      });
+      await waitForNextPaint();
+      const result = await runKeeperMaintenance(effectiveConfig, allItems, { dryRun }, (event) => {
+        showProgress({
+          title,
+          completed: event.completed,
+          total: event.total,
+          currentLabel: event.currentLabel || `已检查 ${event.completed} / ${event.total}`,
+          elapsedLabel: "",
+        });
+      });
+      setKeeperResult(result);
+      if (!dryRun) {
+        try {
+          const refreshedPayload = await fetchAccountList(effectiveConfig);
+          startTransition(() => {
+            setPayload(refreshedPayload);
+            setSelectedAuthIndex("");
+            setSelectedAuthIndexesByPlan({});
+          });
+          await persistPayloadCache(refreshedPayload);
+        } catch (error) {
+          setErrorMessage(`Keeper 已执行，刷新账号列表失败。${resolveErrorMessage(error, "请稍后手动刷新")}`);
+        }
+      }
+      showProgress({
+        title,
+        completed: allItems.length,
+        total: allItems.length,
+        currentLabel: "本轮 Keeper 检查已结束",
+        elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+      });
+      setLoadingLabel(formatKeeperSuccessLabel(result));
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, dryRun ? "Keeper 演练失败" : "Keeper 维护失败"));
+      setLoadingLabel(dryRun ? "Keeper 演练失败" : "Keeper 维护失败");
+      patchVisibleProgress((current) =>
+        current
+          ? {
+              ...current,
+              elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+            }
+          : null,
+      );
+    } finally {
+      setBusyMode("idle");
+    }
+  }
+
+  async function handleRunKeeperDirectAction(action: KeeperDirectAction) {
+    if (!readyToQuery) {
+      setLoadingLabel("请先填写 CPA 地址和管理密钥");
+      return;
+    }
+    if (!keeperSelectedItems.length) {
+      setLoadingLabel("请先在账号列表中勾选账号");
+      return;
+    }
+
+    const targetItems = keeperSelectedItems;
+    const startedAt = performance.now();
+    const title = getKeeperDirectActionTitle(action);
+    try {
+      setErrorMessage("");
+      clearProgress();
+      setBusyMode("keeper");
+      setLoadingLabel(getKeeperDirectActionStartLabel(action));
+      showProgress({
+        title,
+        completed: 0,
+        total: targetItems.length,
+        currentLabel: `共 ${targetItems.length} 个账号`,
+        elapsedLabel: "",
+      });
+      await waitForNextPaint();
+      const result = await runKeeperDirectAction(effectiveConfig, targetItems, action, (event) => {
+        showProgress({
+          title,
+          completed: event.completed,
+          total: event.total,
+          currentLabel: event.currentLabel || `已处理 ${event.completed} / ${event.total}`,
+          elapsedLabel: "",
+        });
+      });
+      setKeeperResult(result);
+      try {
+        const refreshedPayload = await fetchAccountList(effectiveConfig);
+        startTransition(() => {
+          setPayload(refreshedPayload);
+          setSelectedAuthIndex("");
+          setSelectedAuthIndexesByPlan({});
+        });
+        await persistPayloadCache(refreshedPayload);
+      } catch (error) {
+        setErrorMessage(`Keeper 动作已执行，刷新账号列表失败。${resolveErrorMessage(error, "请稍后手动刷新")}`);
+      }
+      showProgress({
+        title,
+        completed: targetItems.length,
+        total: targetItems.length,
+        currentLabel: "选中账号操作已结束",
+        elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+      });
+      setLoadingLabel(formatKeeperDirectActionSuccessLabel(action, result));
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "Keeper 选中账号操作失败"));
+      setLoadingLabel("Keeper 选中账号操作失败");
+      patchVisibleProgress((current) =>
+        current
+          ? {
+              ...current,
+              elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+            }
+          : null,
+      );
+    } finally {
+      setBusyMode("idle");
     }
   }
 
@@ -701,37 +947,6 @@ export default function App() {
     setLastDraftChangeAt(Object.keys(nextDrafts).length > 0 ? Date.now() : null);
     setLastBackupAt(null);
     setPriorityBatchOpen(false);
-  }
-
-  function handleApplyPriority(authIndex: string, priority: number) {
-    const remotePriority = readRemotePriority(authIndex);
-    setPriorityDrafts((current) => {
-      const next = { ...current };
-      if (remotePriority !== null && priority === remotePriority) {
-        delete next[authIndex];
-      } else {
-        next[authIndex] = priority;
-      }
-      return next;
-    });
-    setLastDraftChangeAt(Date.now());
-    setLastBackupAt(null);
-    setErrorMessage("");
-    setLoadingLabel("已更新本地优先级草稿");
-  }
-
-  function handleResetPriority(authIndex: string) {
-    let hasRemainingDrafts = false;
-    setPriorityDrafts((current) => {
-      const next = { ...current };
-      delete next[authIndex];
-      hasRemainingDrafts = Object.keys(next).length > 0;
-      return next;
-    });
-    setLastDraftChangeAt(hasRemainingDrafts ? Date.now() : null);
-    setLastBackupAt(null);
-    setErrorMessage("");
-    setLoadingLabel("已恢复远端优先级");
   }
 
   function handleDiscardPriorityDrafts() {
@@ -946,39 +1161,46 @@ export default function App() {
   return (
     <div className="stitch-shell">
       <SidebarFilters
-        planCounts={planCounts}
-        selectedPlan={selectedPlan}
-        onPlanChange={setSelectedPlan}
+        activePage={activePage}
+        onPageChange={setActivePage}
+        accountCount={allItems.length}
       />
       <main className="stitch-main">
         <WindowChrome onOpenSettings={() => setSettingsOpen(true)} />
-        <Toolbar
-          rootRef={toolbarRef}
-          config={config}
-          search={search}
-          loadingLabel={loadingLabel}
-          lastUpdated={payload?.meta.generated_at ?? ""}
-          backupLabel={backupButtonLabel}
-          canBackupAccounts={allItems.length > 0 && readyToQuery}
-          canOpenPriorityBatch={allItems.length > 0}
-          canQuerySelected={selectedCount > 0 && readyToQuery}
-          canDiscardPriorityDrafts={dirtyPriorityItems.length > 0}
-          canSyncPriorities={canSyncPriorities}
-          isBusy={isBusy}
-          busyMode={busyMode}
-          selectedStatus={selectedStatus}
-          statusCounts={statusCounts}
-          selectedCount={selectedCount}
-          onConfigChange={patchConfig}
-          onSearchChange={setSearch}
-          onOpenPriorityBatch={() => setPriorityBatchOpen(true)}
-          onBackupAccounts={handleBackupAccounts}
-          onLoadAccounts={refreshList}
-          onQuerySelected={handleQuerySelected}
-          onDiscardPriorityDrafts={handleDiscardPriorityDrafts}
-          onSyncPriorities={handleSyncPriorities}
-        />
-        <OverviewCards stats={overviewStats} selectedStatus={selectedStatus} onSelectStatus={setSelectedStatus} />
+        {activePage === "quota" ? (
+          <>
+            <Toolbar
+              rootRef={toolbarRef}
+              loadingLabel={loadingLabel}
+              lastUpdated={payload?.meta.generated_at ?? ""}
+              backupLabel={backupButtonLabel}
+              canBackupAccounts={allItems.length > 0 && readyToQuery}
+              canOpenPriorityBatch={allItems.length > 0}
+              canQuerySelected={selectedCount > 0 && readyToQuery}
+              canDiscardPriorityDrafts={dirtyPriorityItems.length > 0}
+              canSyncPriorities={canSyncPriorities}
+              isBusy={isBusy}
+              busyMode={busyMode}
+              selectedStatus={selectedStatus}
+              selectedCount={selectedCount}
+              onOpenPriorityBatch={() => setPriorityBatchOpen(true)}
+              onBackupAccounts={handleBackupAccounts}
+              onLoadAccounts={refreshList}
+              onQuerySelected={handleQuerySelected}
+              onDiscardPriorityDrafts={handleDiscardPriorityDrafts}
+              onSyncPriorities={handleSyncPriorities}
+            />
+            <PlanFilterBar
+              planCounts={planCounts}
+              selectedPlan={selectedPlan}
+              search={search}
+              busy={isBusy}
+              onPlanChange={handlePlanChange}
+              onSearchChange={setSearch}
+            />
+            <OverviewCards stats={overviewStats} selectedStatus={selectedStatus} onSelectStatus={setSelectedStatus} />
+          </>
+        ) : null}
         <ProgressPanel
           active={Boolean(progress)}
           closing={progressClosing}
@@ -994,23 +1216,96 @@ export default function App() {
             {errorMessage}
           </div>
         ) : null}
-        <section className="stitch-content">
-          <AccountTable
-            items={visibleItems}
-            sortState={sortState}
-            selectedAuthIndex={selectedAuthIndex}
-            selectedAuthIndexes={selectedAuthIndexes}
-            onRequestSort={(key) => setSortState((current) => cycleSort(current, key))}
-            onSelect={setSelectedAuthIndex}
-            onToggleSelection={toggleAccountSelection}
-            onToggleVisibleSelection={toggleVisibleSelections}
-          />
-          <DetailPanel item={selectedItem} onApplyPriority={handleApplyPriority} onResetPriority={handleResetPriority} />
-        </section>
+        {activePage === "quota" ? (
+          <section className="stitch-content">
+            <AccountTable
+              items={visibleItems}
+              sortState={sortState}
+              selectedAuthIndex={selectedAuthIndex}
+              selectedAuthIndexes={selectedAuthIndexes}
+              onRequestSort={(key) => setSortState((current) => cycleSort(current, key))}
+              onSelect={setSelectedAuthIndex}
+              onToggleSelection={toggleAccountSelection}
+              onToggleVisibleSelection={toggleVisibleSelections}
+            />
+          </section>
+        ) : null}
+        {activePage === "config" ? (
+          <section className="config-page" aria-label="配置页面">
+            <ConnectionConfigPanel
+              config={effectiveConfig}
+              busy={isBusy}
+              saving={settingsSaving}
+              onConfigChange={patchConfig}
+              onSave={handleSaveConnectionConfig}
+            />
+          </section>
+        ) : null}
+        {activePage === "keeper" ? (
+          <section className="keeper-page" aria-label="Keeper 操作页面">
+            <KeeperPanel
+              settings={effectiveConfig.keeperSettings}
+              result={keeperResult}
+              accountCount={allItems.length}
+              statusLabel={loadingLabel}
+              ready={readyToQuery && allItems.length > 0}
+              busy={isBusy}
+              saving={settingsSaving}
+              onDryRun={() => handleRunKeeper(true)}
+              onApply={() => handleRunKeeper(false)}
+              onSaveSettings={handleSaveKeeperSettings}
+            />
+            <section className="keeper-selected-actions" aria-label="Keeper 选中账号操作">
+              <div className="keeper-selected-actions__summary">
+                <span className="panel-heading__eyebrow">选中账号</span>
+                <strong>{keeperSelectedCount}</strong>
+              </div>
+              <div className="keeper-selected-actions__buttons">
+                <button
+                  type="button"
+                  className="command-button"
+                  onClick={() => handleRunKeeperDirectAction("disable")}
+                  disabled={keeperSelectedCount === 0 || !readyToQuery || isBusy}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">block</span>
+                  <span>设置禁用 ({keeperSelectedCount})</span>
+                </button>
+                <button
+                  type="button"
+                  className="command-button command-button--primary"
+                  onClick={() => handleRunKeeperDirectAction("refresh")}
+                  disabled={keeperSelectedCount === 0 || !readyToQuery || isBusy}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">cached</span>
+                  <span>刷新证书 ({keeperSelectedCount})</span>
+                </button>
+                <button
+                  type="button"
+                  className="command-button command-button--danger"
+                  onClick={() => handleRunKeeperDirectAction("delete")}
+                  disabled={keeperSelectedCount === 0 || !readyToQuery || isBusy}
+                >
+                  <span className="material-symbols-outlined" aria-hidden="true">delete</span>
+                  <span>删除证书 ({keeperSelectedCount})</span>
+                </button>
+              </div>
+            </section>
+            <AccountTable
+              items={keeperItems}
+              sortState={sortState}
+              selectedAuthIndex={selectedAuthIndex}
+              selectedAuthIndexes={keeperSelectedAuthIndexes}
+              onRequestSort={(key) => setSortState((current) => cycleSort(current, key))}
+              onSelect={setSelectedAuthIndex}
+              onToggleSelection={toggleKeeperAccountSelection}
+              onToggleVisibleSelection={toggleKeeperVisibleSelections}
+            />
+          </section>
+        ) : null}
       </main>
       <SettingsPanel
         open={settingsOpen}
-        config={config}
+        config={effectiveConfig}
         saving={settingsSaving}
         clearingCache={settingsClearingCache}
         busy={isBusy}
@@ -1021,7 +1316,7 @@ export default function App() {
       <PriorityBatchPanel
         open={priorityBatchOpen}
         priorityCounts={priorityCounts}
-        priorityPlanOrder={config.priorityPlanOrder}
+        priorityPlanOrder={effectiveConfig.priorityPlanOrder}
         saving={priorityBatchSaving}
         onClose={() => setPriorityBatchOpen(false)}
         onSubmit={handleApplyPriorityPlan}

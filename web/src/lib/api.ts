@@ -8,12 +8,31 @@ import {
   saveWebQuotaSnapshot,
   type QuotaSnapshotRecord,
 } from "./web-cache";
-import type { AccountItem, DownloadedAccountConfig, PayloadEnvelope, QueryProgressEvent, RuntimeConfig } from "../types";
+import type {
+  AccountItem,
+  DownloadedAccountConfig,
+  KeeperDirectAction,
+  KeeperItemReport,
+  KeeperRunResult,
+  KeeperSettings,
+  PayloadEnvelope,
+  QueryProgressEvent,
+  RuntimeConfig,
+} from "../types";
 
 // 开源版不内置开发期地址，这里只保留示例占位，避免把本地端口写死到产物和文档里。
 export const DEFAULT_CPA_BASE_URL = "https://cpa.example/";
 export const DEFAULT_QUERY_CONCURRENCY = 6;
+export const DEFAULT_KEEPER_SETTINGS: KeeperSettings = {
+  quotaThreshold: 100,
+  expiryThresholdDays: 3,
+  enableRefresh: true,
+  workerThreads: 6,
+};
 const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
+const OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
+const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_USER_AGENT = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal";
 const WINDOW_5H_SECONDS = 5 * 60 * 60;
 const WINDOW_7D_SECONDS = 7 * 24 * 60 * 60;
@@ -33,6 +52,9 @@ interface WebAuthRecord {
   account_id: string;
   auth_index: string;
   priority: number | null;
+  disabled: boolean | undefined;
+  expired: string;
+  has_refresh_token: boolean;
   raw: Record<string, unknown>;
 }
 
@@ -81,6 +103,9 @@ function normalizeItem(input: Partial<AccountItem>): AccountItem {
     remote_priority: typeof remotePriority === "number" ? remotePriority : null,
     draft_priority: typeof input.draft_priority === "number" ? input.draft_priority : undefined,
     dirty_priority: Boolean(input.dirty_priority),
+    disabled: typeof input.disabled === "boolean" ? input.disabled : undefined,
+    expired: typeof input.expired === "string" ? input.expired : undefined,
+    has_refresh_token: typeof input.has_refresh_token === "boolean" ? input.has_refresh_token : undefined,
     status: input.status ?? "unknown",
     windows,
     additional_windows: Array.isArray(input.additional_windows) ? input.additional_windows : [],
@@ -88,6 +113,28 @@ function normalizeItem(input: Partial<AccountItem>): AccountItem {
     timings_ms: input.timings_ms ?? {},
     last_query_at: input.last_query_at ?? null,
     quota_updated_at: readPrimaryQuotaResetLabel(windows) ?? (typeof input.quota_updated_at === "string" ? input.quota_updated_at : null),
+  };
+}
+
+export function normalizeKeeperSettings(input: Partial<KeeperSettings> | null | undefined): KeeperSettings {
+  const raw = input ?? {};
+  const quotaThreshold =
+    typeof raw.quotaThreshold === "number" && Number.isFinite(raw.quotaThreshold)
+      ? Math.max(0, Math.min(100, Math.trunc(raw.quotaThreshold)))
+      : DEFAULT_KEEPER_SETTINGS.quotaThreshold;
+  const expiryThresholdDays =
+    typeof raw.expiryThresholdDays === "number" && Number.isFinite(raw.expiryThresholdDays)
+      ? Math.max(0, Math.trunc(raw.expiryThresholdDays))
+      : DEFAULT_KEEPER_SETTINGS.expiryThresholdDays;
+  const workerThreads =
+    typeof raw.workerThreads === "number" && Number.isFinite(raw.workerThreads)
+      ? Math.max(1, Math.trunc(raw.workerThreads))
+      : DEFAULT_KEEPER_SETTINGS.workerThreads;
+  return {
+    quotaThreshold,
+    expiryThresholdDays,
+    enableRefresh: typeof raw.enableRefresh === "boolean" ? raw.enableRefresh : DEFAULT_KEEPER_SETTINGS.enableRefresh,
+    workerThreads,
   };
 }
 
@@ -101,6 +148,7 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig> | null | un
     cpaBaseUrl: raw.cpaBaseUrl ?? "",
     managementKey: raw.managementKey ?? "",
     queryConcurrency,
+    keeperSettings: normalizeKeeperSettings(raw.keeperSettings),
     priorityPlanOrder: normalizePriorityPlanOrder(raw.priorityPlanOrder ?? PRIORITY_PLAN_KEYS),
   };
 }
@@ -173,6 +221,22 @@ function normalizePriority(value: unknown): number | null {
   }
   const parsed = Number.parseInt(text, 10);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeBoolOrNull(value: unknown): boolean | null {
+  if (value === true || value === false) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "off"].includes(normalized)) {
+      return false;
+    }
+  }
+  return null;
 }
 
 function readRecord(input: unknown): Record<string, unknown> {
@@ -259,6 +323,9 @@ function buildAuthRecordsFromAuthFiles(rawFiles: unknown[]): WebAuthRecord[] {
       account_id: firstNonEmpty(item.chatgpt_account_id, claims.account_id),
       auth_index: firstNonEmpty(item.auth_index, item.authIndex),
       priority: normalizePriority(item.priority),
+      disabled: normalizeBoolOrNull(item.disabled) ?? undefined,
+      expired: firstNonEmpty(item.expired, item.expires_at, item.expiresAt),
+      has_refresh_token: Boolean(firstNonEmpty(item.refresh_token, item.refreshToken)),
       raw: item,
     });
   }
@@ -274,6 +341,9 @@ function authRecordToItem(record: WebAuthRecord): Partial<AccountItem> {
     auth_index: record.auth_index,
     priority: record.priority,
     remote_priority: record.priority,
+    disabled: record.disabled ?? undefined,
+    expired: record.expired || undefined,
+    has_refresh_token: record.has_refresh_token,
     status: "unknown",
     windows: [],
     additional_windows: [],
@@ -335,6 +405,7 @@ function mergeQuotaSnapshotIntoItem(item: AccountItem, snapshot: QuotaSnapshotRe
     ...item,
     name: item.name || snapshot.name,
     email: item.email || snapshot.email,
+    expired: item.expired || snapshot.expired || undefined,
     status: snapshot.status,
     windows: snapshot.windows,
     additional_windows: snapshot.additional_windows,
@@ -371,6 +442,7 @@ function buildQuotaSnapshotFromReport(report: WebQuotaReport, previous: QuotaSna
     auth_index: report.auth_index,
     name: report.name,
     email: report.email,
+    expired: report.expired || previous?.expired || null,
     status: report.status,
     windows: freshQuota ? report.windows : (previous?.windows ?? report.windows),
     additional_windows: freshQuota ? report.additional_windows : (previous?.additional_windows ?? report.additional_windows),
@@ -385,6 +457,7 @@ function mergeQuotaSnapshotIntoReport(report: WebQuotaReport, snapshot: QuotaSna
   return {
     ...report,
     status: snapshot.status,
+    expired: snapshot.expired || report.expired,
     windows: snapshot.windows,
     additional_windows: snapshot.additional_windows,
     error: snapshot.error,
@@ -491,6 +564,19 @@ async function downloadAuthFile(config: RuntimeConfig, name: string): Promise<Re
   }
 }
 
+async function uploadAuthFile(config: RuntimeConfig, name: string, payload: Record<string, unknown>): Promise<void> {
+  await fetchManagementText(
+    config,
+    "/v0/management/auth-files",
+    {
+      method: "POST",
+      headers: buildManagementHeaders(config, "application/json"),
+      body: JSON.stringify(payload),
+    },
+    { name },
+  );
+}
+
 function applyDownloadedAuthPayload(record: WebAuthRecord, payload: Record<string, unknown>): void {
   const claims = extractCodexClaims(firstNonEmpty(payload.id_token));
   const currentPlan = normalizePlan(record.plan_type) === "unknown" ? "" : record.plan_type;
@@ -498,7 +584,20 @@ function applyDownloadedAuthPayload(record: WebAuthRecord, payload: Record<strin
   record.plan_type = firstNonEmpty(currentPlan, claims.plan_type, inferPlanFromName(record.name), "unknown");
   record.account_id = firstNonEmpty(record.account_id, payload.account_id, claims.account_id);
   record.priority = normalizePriority(firstPresent(record.priority, payload.priority));
+  record.disabled = normalizeBoolOrNull(firstPresent(payload.disabled, record.disabled)) ?? undefined;
+  record.expired = firstNonEmpty(payload.expired, payload.expires_at, payload.expiresAt, record.expired);
+  record.has_refresh_token = Boolean(firstNonEmpty(payload.refresh_token, payload.refreshToken)) || record.has_refresh_token;
   record.raw = { ...record.raw, ...payload };
+}
+
+function copyAuthRecordIntoReport(report: WebQuotaReport, record: WebAuthRecord): void {
+  report.email = record.email;
+  report.plan_type = record.plan_type;
+  report.account_id = record.account_id;
+  report.priority = record.priority;
+  report.disabled = record.disabled;
+  report.expired = record.expired;
+  report.has_refresh_token = record.has_refresh_token;
 }
 
 async function preloadMissingAuthDetails(config: RuntimeConfig, records: WebAuthRecord[]): Promise<WebAuthRecord[]> {
@@ -516,10 +615,14 @@ async function preloadMissingAuthDetails(config: RuntimeConfig, records: WebAuth
   return records;
 }
 
-async function loadWebAuthRecords(config: RuntimeConfig): Promise<WebAuthRecord[]> {
+async function loadWebAuthSummaryRecords(config: RuntimeConfig): Promise<WebAuthRecord[]> {
   const payload = await fetchManagementJson(config, "/v0/management/auth-files");
   const rawFiles = Array.isArray(payload.files) ? payload.files : [];
-  return preloadMissingAuthDetails(config, buildAuthRecordsFromAuthFiles(rawFiles));
+  return buildAuthRecordsFromAuthFiles(rawFiles);
+}
+
+async function loadWebAuthRecords(config: RuntimeConfig): Promise<WebAuthRecord[]> {
+  return preloadMissingAuthDetails(config, await loadWebAuthSummaryRecords(config));
 }
 
 function buildWhamApiCallPayload(record: WebAuthRecord): Record<string, unknown> {
@@ -693,14 +796,19 @@ async function queryWebRecord(config: RuntimeConfig, input: WebAuthRecord): Prom
   };
 
   try {
-    if (!record.account_id) {
+    if (record.name) {
       const downloadStartedAt = performance.now();
-      applyDownloadedAuthPayload(record, await downloadAuthFile(config, record.name));
-      report.email = record.email;
-      report.plan_type = record.plan_type;
-      report.account_id = record.account_id;
-      report.priority = record.priority;
-      report.timings_ms.download_auth_file_ms = Math.round((performance.now() - downloadStartedAt) * 10) / 10;
+      try {
+        applyDownloadedAuthPayload(record, await downloadAuthFile(config, record.name));
+        copyAuthRecordIntoReport(report, record);
+      } catch (error) {
+        if (!record.account_id) {
+          report.error = error instanceof Error ? error.message : String(error);
+          return finalize();
+        }
+      } finally {
+        report.timings_ms.download_auth_file_ms = Math.round((performance.now() - downloadStartedAt) * 10) / 10;
+      }
     }
     if (!record.auth_index) {
       report.error = "缺少 auth_index";
@@ -779,9 +887,44 @@ function buildAuthRecordsFromCachedItems(items: AccountItem[]): WebAuthRecord[] 
       account_id: item.account_id,
       auth_index: item.auth_index,
       priority: typeof item.priority === "number" ? item.priority : null,
+      disabled: typeof item.disabled === "boolean" ? item.disabled : undefined,
+      expired: item.expired ?? "",
+      has_refresh_token: Boolean(item.has_refresh_token),
       raw: item as unknown as Record<string, unknown>,
     })),
   );
+}
+
+function mergeFreshAuthRecord(record: WebAuthRecord, freshRecord: WebAuthRecord | null): WebAuthRecord {
+  if (!freshRecord) {
+    return record;
+  }
+  return {
+    name: freshRecord.name || record.name,
+    email: freshRecord.email || record.email,
+    plan_type: freshRecord.plan_type || record.plan_type,
+    account_id: freshRecord.account_id || record.account_id,
+    auth_index: freshRecord.auth_index || record.auth_index,
+    priority: freshRecord.priority ?? record.priority,
+    disabled: freshRecord.disabled ?? record.disabled,
+    expired: freshRecord.expired || record.expired,
+    has_refresh_token: freshRecord.has_refresh_token || record.has_refresh_token,
+    raw: { ...record.raw, ...freshRecord.raw },
+  };
+}
+
+async function refreshCachedAuthRecords(config: RuntimeConfig, records: WebAuthRecord[]): Promise<WebAuthRecord[]> {
+  if (!records.length) {
+    return records;
+  }
+  try {
+    const freshRecords = await loadWebAuthSummaryRecords(config);
+    const byAuthIndex = new Map(freshRecords.filter((record) => record.auth_index).map((record) => [record.auth_index, record]));
+    const byName = new Map(freshRecords.filter((record) => record.name).map((record) => [record.name, record]));
+    return records.map((record) => mergeFreshAuthRecord(record, byAuthIndex.get(record.auth_index) ?? byName.get(record.name) ?? null));
+  } catch {
+    return records;
+  }
 }
 
 function readWebStorage<T>(primaryKey: string, legacyKeys: string[] = []): T | null {
@@ -903,6 +1046,511 @@ async function webSyncAccountPriorities(
   }
 }
 
+function formatKeeperWindowLabel(seconds: number | null, fallback: string): string {
+  if (seconds === WINDOW_5H_SECONDS) {
+    return "5h";
+  }
+  if (seconds === WINDOW_7D_SECONDS) {
+    return "Week";
+  }
+  return fallback;
+}
+
+function formatKeeperRemaining(seconds: number | null): string {
+  if (seconds === null) {
+    return "未知";
+  }
+  if (seconds <= 0) {
+    return "已过期";
+  }
+  const days = Math.floor(seconds / 86_400);
+  const hours = Math.floor((seconds % 86_400) / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  if (days > 0) {
+    return `${days}天${hours}小时`;
+  }
+  if (hours > 0) {
+    return `${hours}小时${minutes}分钟`;
+  }
+  return `${minutes}分钟`;
+}
+
+function readExpirationSeconds(expired: string, accessToken: string): number | null {
+  if (expired) {
+    const normalized = expired.endsWith("Z") ? expired : expired;
+    const parsed = Date.parse(normalized);
+    if (Number.isFinite(parsed)) {
+      return (parsed - Date.now()) / 1000;
+    }
+  }
+  const jwtExp = numberOrNull(decodeJwtPayload(accessToken).exp);
+  if (jwtExp !== null && jwtExp > 0) {
+    return jwtExp - Date.now() / 1000;
+  }
+  return null;
+}
+
+function readKeeperQuotaInfo(body: Record<string, unknown>): Pick<
+  KeeperItemReport,
+  "primary_label" | "primary_used_percent" | "secondary_label" | "secondary_used_percent"
+> {
+  const rateLimit = readRecord(firstPresent(body.rate_limit, body.rateLimit));
+  const primary = readRecord(firstPresent(rateLimit.primary_window, rateLimit.primaryWindow));
+  const secondary = readRecord(firstPresent(rateLimit.secondary_window, rateLimit.secondaryWindow));
+  const primarySeconds = numberOrNull(firstPresent(primary.limit_window_seconds, primary.limitWindowSeconds));
+  const secondarySeconds = numberOrNull(firstPresent(secondary.limit_window_seconds, secondary.limitWindowSeconds));
+  return {
+    primary_label: formatKeeperWindowLabel(primarySeconds, "primary_window"),
+    primary_used_percent: numberOrNull(firstPresent(primary.used_percent, primary.usedPercent)),
+    secondary_label: Object.keys(secondary).length ? formatKeeperWindowLabel(secondarySeconds, "secondary_window") : "",
+    secondary_used_percent: Object.keys(secondary).length ? numberOrNull(firstPresent(secondary.used_percent, secondary.usedPercent)) : null,
+  };
+}
+
+function buildKeeperBaseReport(item: AccountItem): KeeperItemReport {
+  return {
+    name: item.name,
+    email: item.email,
+    auth_index: item.auth_index,
+    plan_type: item.plan_type,
+    disabled: typeof item.disabled === "boolean" ? item.disabled : null,
+    expired: item.expired ?? "",
+    remaining_label: "未知",
+    has_refresh_token: Boolean(item.has_refresh_token),
+    primary_label: "",
+    primary_used_percent: null,
+    secondary_label: "",
+    secondary_used_percent: null,
+    action: "skip",
+    outcome: "skipped",
+    applied: false,
+    refresh_candidate: false,
+    refreshed: false,
+    reason: "尚未检查",
+  };
+}
+
+async function deleteManagementAuthFile(config: RuntimeConfig, name: string): Promise<void> {
+  await fetchManagementText(config, "/v0/management/auth-files", { method: "DELETE" }, { name });
+}
+
+async function setManagementAuthFileDisabled(config: RuntimeConfig, name: string, disabled: boolean): Promise<void> {
+  await fetchManagementText(config, "/v0/management/auth-files/status", {
+    method: "PATCH",
+    headers: buildManagementHeaders(config, "application/json"),
+    body: JSON.stringify({ name, disabled }),
+  });
+}
+
+function buildOpenAIRefreshPayload(refreshToken: string): Record<string, unknown> {
+  return {
+    redirect_uri: OPENAI_CODEX_REDIRECT_URI,
+    grant_type: "refresh_token",
+    client_id: OPENAI_CODEX_CLIENT_ID,
+    refresh_token: refreshToken,
+  };
+}
+
+function buildOpenAIRefreshApiCallPayload(authIndex: string, refreshToken: string): Record<string, unknown> {
+  return {
+    auth_index: authIndex,
+    method: "POST",
+    url: OPENAI_OAUTH_TOKEN_URL,
+    header: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    data: JSON.stringify(buildOpenAIRefreshPayload(refreshToken)),
+  };
+}
+
+async function refreshOpenAITokenViaManagementApi(config: RuntimeConfig, authIndex: string, refreshToken: string): Promise<Record<string, unknown>> {
+  const response = await fetchManagementJson(config, "/v0/management/api-call", {
+    method: "POST",
+    headers: buildManagementHeaders(config, "application/json"),
+    body: JSON.stringify(buildOpenAIRefreshApiCallPayload(authIndex, refreshToken)),
+  });
+  const upstreamStatus = Number(response.status_code ?? 0);
+  const bodyText = typeof response.body === "string" ? response.body : "";
+  if (upstreamStatus < 200 || upstreamStatus >= 300) {
+    throw new Error(bodyText.trim() || `OpenAI refresh 返回 HTTP ${upstreamStatus}`);
+  }
+  try {
+    const body = bodyText.trim() ? readRecord(JSON.parse(bodyText)) : {};
+    if (!firstNonEmpty(body.access_token, body.accessToken)) {
+      throw new Error("OpenAI refresh 没有返回 access_token");
+    }
+    return body;
+  } catch (error) {
+    if (error instanceof Error && error.message === "OpenAI refresh 没有返回 access_token") {
+      throw error;
+    }
+    const detail = error instanceof Error ? error.message : "未知解析错误";
+    throw new Error(`OpenAI refresh 没有返回合法 JSON: ${detail}`);
+  }
+}
+
+function buildRefreshedAuthPayload(detail: Record<string, unknown>, refreshBody: Record<string, unknown>): Record<string, unknown> {
+  const now = new Date();
+  const expiresIn = numberOrNull(firstPresent(refreshBody.expires_in, refreshBody.expiresIn)) ?? 864_000;
+  return {
+    ...detail,
+    access_token: firstNonEmpty(refreshBody.access_token, refreshBody.accessToken),
+    refresh_token: firstNonEmpty(refreshBody.refresh_token, refreshBody.refreshToken, detail.refresh_token, detail.refreshToken),
+    id_token: firstNonEmpty(refreshBody.id_token, refreshBody.idToken, detail.id_token, detail.idToken),
+    last_refresh: now.toISOString(),
+    expired: new Date(now.getTime() + expiresIn * 1000).toISOString(),
+    type: firstNonEmpty(detail.type, detail.provider, "codex"),
+  };
+}
+
+async function refreshKeeperAuthFile(
+  config: RuntimeConfig,
+  item: AccountItem,
+  detail: Record<string, unknown>,
+  keepDisabled: boolean,
+): Promise<Record<string, unknown>> {
+  const authIndex = firstNonEmpty(item.auth_index, detail.auth_index, detail.authIndex);
+  const refreshToken = firstNonEmpty(detail.refresh_token, detail.refreshToken);
+  if (!authIndex) {
+    throw new Error("缺少 auth_index，无法通过 CPA 代理刷新 token");
+  }
+  if (!refreshToken) {
+    throw new Error("缺少 Refresh Token");
+  }
+  const refreshBody = await refreshOpenAITokenViaManagementApi(config, authIndex, refreshToken);
+  const refreshedAuth = buildRefreshedAuthPayload(detail, refreshBody);
+  await uploadAuthFile(config, item.name, refreshedAuth);
+  if (keepDisabled) {
+    await setManagementAuthFileDisabled(config, item.name, true);
+  }
+  return refreshedAuth;
+}
+
+async function applyKeeperAction(config: RuntimeConfig, report: KeeperItemReport, dryRun: boolean): Promise<boolean> {
+  if (dryRun || report.action === "none" || report.action === "skip" || report.action === "refresh" || report.action === "refresh-candidate") {
+    return false;
+  }
+  if (report.action === "delete") {
+    await deleteManagementAuthFile(config, report.name);
+    return true;
+  }
+  if (report.action === "disable") {
+    await setManagementAuthFileDisabled(config, report.name, true);
+    return true;
+  }
+  if (report.action === "enable") {
+    await setManagementAuthFileDisabled(config, report.name, false);
+    return true;
+  }
+  return false;
+}
+
+async function processKeeperDirectActionItem(
+  config: RuntimeConfig,
+  item: AccountItem,
+  action: KeeperDirectAction,
+): Promise<KeeperItemReport> {
+  const report = buildKeeperBaseReport(item);
+  try {
+    if (action === "disable") {
+      await setManagementAuthFileDisabled(config, item.name, true);
+      report.action = "disable";
+      report.outcome = "alive";
+      report.applied = true;
+      report.disabled = true;
+      report.reason = "已手动禁用证书";
+      return report;
+    }
+
+    if (action === "delete") {
+      await deleteManagementAuthFile(config, item.name);
+      report.action = "delete";
+      report.outcome = "dead";
+      report.applied = true;
+      report.reason = "已手动删除证书";
+      return report;
+    }
+
+    const detail = await downloadAuthFile(config, item.name);
+    const claims = extractCodexClaims(firstNonEmpty(detail.id_token));
+    report.email = firstNonEmpty(item.email, detail.email, claims.email);
+    report.plan_type = firstNonEmpty(item.plan_type, detail.plan_type, claims.plan_type, "unknown");
+    report.disabled = normalizeBoolOrNull(firstPresent(detail.disabled, item.disabled)) ?? false;
+    report.expired = firstNonEmpty(detail.expired, detail.expires_at, detail.expiresAt, item.expired);
+    report.has_refresh_token = Boolean(firstNonEmpty(detail.refresh_token, detail.refreshToken));
+
+    const refreshedAuth = await refreshKeeperAuthFile(config, item, detail, Boolean(report.disabled));
+    report.action = "refresh";
+    report.outcome = "alive";
+    report.applied = true;
+    report.refreshed = true;
+    report.expired = firstNonEmpty(refreshedAuth.expired, refreshedAuth.expires_at, refreshedAuth.expiresAt, report.expired);
+    report.remaining_label = formatKeeperRemaining(readExpirationSeconds(report.expired, firstNonEmpty(refreshedAuth.access_token, refreshedAuth.accessToken)));
+    report.reason = "已手动刷新证书";
+    return report;
+  } catch (error) {
+    report.action = "error";
+    report.outcome = "error";
+    report.reason = error instanceof Error ? error.message : String(error);
+    return report;
+  }
+}
+
+async function queryKeeperUsage(config: RuntimeConfig, item: AccountItem, detail: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown>; rawBody: string }> {
+  const accountId = firstNonEmpty(detail.account_id, detail.chatgpt_account_id, item.account_id);
+  const authIndex = firstNonEmpty(item.auth_index, detail.auth_index, detail.authIndex);
+  if (!authIndex) {
+    throw new Error("缺少 auth_index，无法通过 CPA 代理检查 usage");
+  }
+  if (!accountId) {
+    throw new Error("缺少 chatgpt_account_id");
+  }
+  const response = await fetchManagementJson(config, "/v0/management/api-call", {
+    method: "POST",
+    headers: buildManagementHeaders(config, "application/json"),
+    body: JSON.stringify(
+      buildWhamApiCallPayload({
+        name: item.name,
+        email: item.email,
+        plan_type: item.plan_type,
+        account_id: accountId,
+        auth_index: authIndex,
+        priority: typeof item.priority === "number" ? item.priority : null,
+        disabled: typeof item.disabled === "boolean" ? item.disabled : undefined,
+        expired: item.expired ?? "",
+        has_refresh_token: Boolean(item.has_refresh_token),
+        raw: detail,
+      }),
+    ),
+  });
+  const status = Number(response.status_code ?? 0);
+  const rawBody = typeof response.body === "string" ? response.body : "";
+  return {
+    status,
+    rawBody,
+    body: rawBody.trim() ? readRecord(JSON.parse(rawBody)) : {},
+  };
+}
+
+async function processKeeperItem(config: RuntimeConfig, item: AccountItem, dryRun: boolean): Promise<KeeperItemReport> {
+  const settings = normalizeKeeperSettings(config.keeperSettings);
+  const report = buildKeeperBaseReport(item);
+  try {
+    const detail = await downloadAuthFile(config, item.name);
+    const claims = extractCodexClaims(firstNonEmpty(detail.id_token));
+    report.email = firstNonEmpty(item.email, detail.email, claims.email);
+    report.plan_type = firstNonEmpty(item.plan_type, detail.plan_type, claims.plan_type, "unknown");
+    report.disabled = normalizeBoolOrNull(firstPresent(detail.disabled, item.disabled)) ?? false;
+    report.expired = firstNonEmpty(detail.expired, detail.expires_at, detail.expiresAt, item.expired);
+    report.has_refresh_token = Boolean(firstNonEmpty(detail.refresh_token, detail.refreshToken));
+    const accessToken = firstNonEmpty(detail.access_token, detail.accessToken);
+    const remainingSeconds = readExpirationSeconds(report.expired, accessToken);
+    report.remaining_label = formatKeeperRemaining(remainingSeconds);
+
+    if (!report.has_refresh_token && remainingSeconds !== null && remainingSeconds <= 0) {
+      report.action = "delete";
+      report.outcome = "dead";
+      report.reason = "Token 已过期且无 Refresh Token";
+      report.applied = await applyKeeperAction(config, report, dryRun);
+      return report;
+    }
+    if (!accessToken) {
+      report.action = "skip";
+      report.outcome = "skipped";
+      report.reason = "缺少 access_token";
+      return report;
+    }
+
+    const usage = await queryKeeperUsage(config, item, detail);
+    if (usage.status === 401 || usage.status === 402) {
+      report.action = "delete";
+      report.outcome = "dead";
+      report.reason = usage.status === 401 ? "Usage 返回 401，Token 无效" : "Usage 返回 402，workspace 不可用";
+      report.applied = await applyKeeperAction(config, report, dryRun);
+      return report;
+    }
+    if (usage.status !== 200) {
+      report.action = "skip";
+      report.outcome = "skipped";
+      report.reason = usage.rawBody.trim() || `Usage 返回 HTTP ${usage.status}`;
+      return report;
+    }
+
+    Object.assign(report, readKeeperQuotaInfo(usage.body));
+    const primaryPct = report.primary_used_percent ?? 0;
+    const secondaryPct = report.secondary_used_percent;
+    const primaryReached = primaryPct >= settings.quotaThreshold;
+    const secondaryReached = secondaryPct !== null && secondaryPct >= settings.quotaThreshold;
+    const belowThreshold = secondaryPct === null
+      ? primaryPct < settings.quotaThreshold
+      : primaryPct < settings.quotaThreshold && secondaryPct < settings.quotaThreshold;
+    const reachedSummary = [
+      primaryReached ? `${report.primary_label}额度 ${primaryPct}%` : "",
+      secondaryReached ? `${report.secondary_label}额度 ${secondaryPct}%` : "",
+    ].filter(Boolean).join("、") || `${report.primary_label || "quota"}额度 ${primaryPct}%`;
+
+    let effectiveDisabled = Boolean(report.disabled);
+    if (!report.has_refresh_token && (primaryReached || secondaryReached)) {
+      report.action = "delete";
+      report.outcome = "dead";
+      report.reason = `无 Refresh Token，且${reachedSummary} >= ${settings.quotaThreshold}%`;
+    } else if (effectiveDisabled && belowThreshold) {
+      report.action = "enable";
+      report.outcome = "alive";
+      report.reason = "已禁用账号额度恢复，符合重新启用条件";
+      effectiveDisabled = false;
+    } else if (!effectiveDisabled && (primaryReached || secondaryReached)) {
+      report.action = "disable";
+      report.outcome = "alive";
+      report.reason = `${reachedSummary} >= ${settings.quotaThreshold}%`;
+      effectiveDisabled = true;
+    } else if (effectiveDisabled) {
+      report.action = "none";
+      report.outcome = "alive";
+      report.reason = `${reachedSummary} >= ${settings.quotaThreshold}%，保持禁用`;
+    } else {
+      report.action = "none";
+      report.outcome = "alive";
+      report.reason = "额度未达到维护阈值";
+    }
+
+    report.refresh_candidate = Boolean(
+      settings.enableRefresh &&
+        report.has_refresh_token &&
+        effectiveDisabled &&
+        remainingSeconds !== null &&
+        remainingSeconds > 0 &&
+        remainingSeconds < settings.expiryThresholdDays * 86_400,
+    );
+    if (report.refresh_candidate) {
+      if (dryRun) {
+        if (report.action === "none") {
+          report.action = "refresh";
+          report.reason = "已禁用且临近过期，执行时将刷新 token";
+        } else {
+          report.reason += "；同时临近过期，执行时将刷新 token";
+        }
+        return report;
+      }
+      const refreshedAuth = await refreshKeeperAuthFile(config, item, detail, effectiveDisabled);
+      report.action = "refresh";
+      report.outcome = "alive";
+      report.applied = true;
+      report.refreshed = true;
+      report.expired = firstNonEmpty(refreshedAuth.expired, refreshedAuth.expires_at, refreshedAuth.expiresAt, report.expired);
+      report.remaining_label = formatKeeperRemaining(readExpirationSeconds(report.expired, firstNonEmpty(refreshedAuth.access_token, refreshedAuth.accessToken)));
+      report.reason = report.reason === "额度未达到维护阈值" || report.reason.includes("保持禁用")
+        ? "已禁用且临近过期，已刷新 token"
+        : `${report.reason}；已刷新 token`;
+      return report;
+    }
+
+    report.applied = await applyKeeperAction(config, report, dryRun);
+    return report;
+  } catch (error) {
+    report.action = "error";
+    report.outcome = "error";
+    report.reason = error instanceof Error ? error.message : String(error);
+    return report;
+  }
+}
+
+function buildKeeperRunResult(items: KeeperItemReport[], dryRun: boolean): KeeperRunResult {
+  return {
+    summary: {
+      generated_at: new Date().toISOString(),
+      dry_run: dryRun,
+      total: items.length,
+      alive: items.filter((item) => item.outcome === "alive").length,
+      dead: items.filter((item) => item.action === "delete").length,
+      disabled: items.filter((item) => item.action === "disable").length,
+      enabled: items.filter((item) => item.action === "enable").length,
+      refreshed: items.filter((item) => item.refreshed || item.action === "refresh").length,
+      refresh_candidates: items.filter((item) => item.refresh_candidate).length,
+      skipped: items.filter((item) => item.outcome === "skipped").length,
+      network_error: items.filter((item) => item.outcome === "network_error").length,
+      errors: items.filter((item) => item.outcome === "error").length,
+    },
+    items,
+  };
+}
+
+export async function runKeeperMaintenance(
+  config: RuntimeConfig,
+  items: AccountItem[],
+  options: { dryRun: boolean },
+  onProgress?: (event: QueryProgressEvent) => void,
+): Promise<KeeperRunResult> {
+  const normalizedConfig = normalizeRuntimeConfig(config);
+  const targets = items.filter((item) => item.name.trim());
+  const workerCount = Math.max(1, Math.min(normalizedConfig.keeperSettings.workerThreads, targets.length || 1));
+  const reports: KeeperItemReport[] = new Array(targets.length);
+  const requestId = createRequestId(options.dryRun ? "keeper-dry-run" : "keeper-apply");
+  let nextIndex = 0;
+  let completed = 0;
+
+  async function runWorker() {
+    while (nextIndex < targets.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const report = await processKeeperItem(normalizedConfig, targets[currentIndex], options.dryRun);
+      reports[currentIndex] = report;
+      completed += 1;
+      onProgress?.({
+        requestId,
+        completed,
+        total: targets.length,
+        currentLabel: report.email || report.name,
+        authIndex: report.auth_index,
+        status: report.action,
+        timingsMs: {},
+      });
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return buildKeeperRunResult(reports, options.dryRun);
+}
+
+export async function runKeeperDirectAction(
+  config: RuntimeConfig,
+  items: AccountItem[],
+  action: KeeperDirectAction,
+  onProgress?: (event: QueryProgressEvent) => void,
+): Promise<KeeperRunResult> {
+  const normalizedConfig = normalizeRuntimeConfig(config);
+  const targets = items.filter((item) => item.name.trim());
+  const workerCount = Math.max(1, Math.min(normalizedConfig.keeperSettings.workerThreads, targets.length || 1));
+  const reports: KeeperItemReport[] = new Array(targets.length);
+  const requestId = createRequestId(`keeper-direct-${action}`);
+  let nextIndex = 0;
+  let completed = 0;
+
+  async function runWorker() {
+    while (nextIndex < targets.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      const target = targets[currentIndex];
+      const report = await processKeeperDirectActionItem(normalizedConfig, target, action);
+      reports[currentIndex] = report;
+      completed += 1;
+      onProgress?.({
+        requestId,
+        completed,
+        total: targets.length,
+        currentLabel: target.email || target.name,
+        authIndex: target.auth_index,
+        status: report.action,
+        timingsMs: {},
+      });
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return buildKeeperRunResult(reports, false);
+}
+
 export async function fetchAccountList(config: RuntimeConfig): Promise<PayloadEnvelope> {
   return buildWebListPayload(await loadWebAuthRecords(normalizeRuntimeConfig(config)));
 }
@@ -913,7 +1561,8 @@ export async function queryCachedAccounts(
   onProgress?: (event: QueryProgressEvent) => void,
 ): Promise<PayloadEnvelope> {
   const normalizedConfig = normalizeRuntimeConfig(config);
-  const reports = await runWebQueries(normalizedConfig, buildAuthRecordsFromCachedItems(items), onProgress);
+  const records = await refreshCachedAuthRecords(normalizedConfig, buildAuthRecordsFromCachedItems(items));
+  const reports = await runWebQueries(normalizedConfig, records, onProgress);
   return buildQueryPayload(await persistWebQuotaReports(reports));
 }
 

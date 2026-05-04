@@ -8,6 +8,12 @@ export const README_DEMO_CONFIG: RuntimeConfig = {
   cpaBaseUrl: "https://demo-cpa.example/",
   managementKey: "demo-management-key",
   queryConcurrency: 4,
+  keeperSettings: {
+    quotaThreshold: 100,
+    expiryThresholdDays: 3,
+    enableRefresh: true,
+    workerThreads: 4,
+  },
   priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
 };
 

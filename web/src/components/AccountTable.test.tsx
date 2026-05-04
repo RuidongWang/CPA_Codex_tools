@@ -55,6 +55,7 @@ function makeAccount(index: number, prefix = "large"): AccountItem {
     error: "",
     last_query_at: "2026-05-02T10:30:00+08:00",
     quota_updated_at: "05-03 14:22",
+    expired: "2026-05-08T16:45:00+08:00",
   };
 }
 
@@ -89,7 +90,7 @@ describe("AccountTable", () => {
     expect(screen.queryByText("large-249@example.com")).not.toBeInTheDocument();
     expect(screen.getAllByRole("row").length).toBeLessThan(80);
     const spacer = container.querySelector(".quota-grid__spacer");
-    expect(spacer).toHaveAttribute("colspan", "9");
+    expect(spacer).toHaveAttribute("colspan", "10");
   });
 
   it("shows quota updated time in the table and requests quota updated sorting", async () => {
@@ -103,6 +104,19 @@ describe("AccountTable", () => {
 
     await user.click(screen.getByRole("button", { name: "额度更新时间 排序" }));
     expect(onRequestSort).toHaveBeenCalledWith("quotaUpdatedAt");
+  });
+
+  it("shows certificate expiration time in the account list and requests sorting", async () => {
+    const user = userEvent.setup();
+    const onRequestSort = vi.fn();
+
+    renderTable([makeAccount(0, "token")], { onRequestSort });
+
+    expect(screen.getByRole("columnheader", { name: "证书过期时间" })).toBeInTheDocument();
+    expect(screen.getByText("05-08 16:45")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "证书过期时间 排序" }));
+    expect(onRequestSort).toHaveBeenCalledWith("expiredAt");
   });
 
   it("uses a mobile card list that exposes account quota and selection details", () => {
@@ -128,6 +142,7 @@ describe("AccountTable", () => {
     expect(within(firstCard).getByText("44%")).toBeInTheDocument();
     expect(within(firstCard).getByText("05-02 10:30")).toBeInTheDocument();
     expect(within(firstCard).getByText("额度 05-03 14:22")).toBeInTheDocument();
+    expect(within(firstCard).getByText("证书过期时间 05-08 16:45")).toBeInTheDocument();
     expect(within(secondCard).getByText("额度 -")).toBeInTheDocument();
     expect(within(firstCard).getByRole("checkbox", { name: "选择 mobile-000@example.com" })).toBeChecked();
   });

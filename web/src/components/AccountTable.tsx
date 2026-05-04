@@ -22,10 +22,10 @@ const STATUS_LABELS: Record<AccountItem["status"], string> = {
   error: "异常",
   unknown: "未查",
 };
-const TABLE_COLUMN_COUNT = 9;
+const TABLE_COLUMN_COUNT = 10;
 const MOBILE_BREAKPOINT = 760;
 const TABLE_ROW_HEIGHT = 72;
-const MOBILE_CARD_HEIGHT = 208;
+const MOBILE_CARD_HEIGHT = 232;
 const VIRTUAL_OVERSCAN = 8;
 const DEFAULT_TABLE_VIEWPORT_HEIGHT = 720;
 const DEFAULT_MOBILE_VIEWPORT_HEIGHT = 680;
@@ -89,6 +89,10 @@ function renderShortTimestamp(value: string | null): string {
 
 function readQuotaUpdatedAt(item: AccountItem): string | null {
   return item.quota_updated_at ?? null;
+}
+
+function readExpiredAt(item: AccountItem): string | null {
+  return item.expired ?? null;
 }
 
 function renderQuotaCell(value: number | null, resetLabel: string | null) {
@@ -269,6 +273,7 @@ function AccountMobileCard({
         {item.dirty_priority ? <span className="priority-draft-badge">未同步</span> : null}
         <span>{renderShortTimestamp(item.last_query_at)}</span>
         <span className="account-card__quota-updated">额度 {renderShortTimestamp(readQuotaUpdatedAt(item))}</span>
+        <span className="account-card__expired">证书过期时间 {renderShortTimestamp(readExpiredAt(item))}</span>
       </div>
       <div className="account-card__quotas">
         {renderMobileQuota("5h", window5h?.remaining_percent ?? null, window5h?.reset_label ?? null)}
@@ -304,10 +309,6 @@ export function AccountTable({
       <div className="grid-panel__header">
         <div className="panel-heading panel-heading--compact">
           <p className="panel-heading__eyebrow">账号列表</p>
-        </div>
-        <div className="grid-panel__summary">
-          <span>{items.length} 个结果</span>
-          <span>{selectedAuthIndexes.length} 已选</span>
         </div>
       </div>
       <div className={isMobile ? "grid-panel__body account-list-body account-list-body--mobile" : "grid-panel__body account-list-body"} ref={isMobile ? mobileVirtual.containerRef : tableVirtual.containerRef}>
@@ -434,6 +435,19 @@ export function AccountTable({
                 <th>
                   <button
                     type="button"
+                    className={activeSortKey === "expiredAt" ? "quota-grid__sort quota-grid__sort--active" : "quota-grid__sort"}
+                    aria-label={buildSortAriaLabel("证书过期时间", activeSortKey === "expiredAt", activeSortDirection)}
+                    onClick={() => onRequestSort("expiredAt")}
+                  >
+                    <span>证书过期时间</span>
+                    <span className="material-symbols-outlined" aria-hidden="true">
+                      {renderSortIcon(activeSortKey === "expiredAt", activeSortDirection)}
+                    </span>
+                  </button>
+                </th>
+                <th>
+                  <button
+                    type="button"
                     className={activeSortKey === "updatedAt" ? "quota-grid__sort quota-grid__sort--active" : "quota-grid__sort"}
                     aria-label={buildSortAriaLabel("更新时间", activeSortKey === "updatedAt", activeSortDirection)}
                     onClick={() => onRequestSort("updatedAt")}
@@ -496,6 +510,9 @@ export function AccountTable({
                     <td>{renderQuotaCell(window7d?.remaining_percent ?? null, window7d?.reset_label ?? null)}</td>
                     <td className="quota-grid__quota-updated-at" title={readQuotaUpdatedAt(item) || undefined}>
                       {renderShortTimestamp(readQuotaUpdatedAt(item))}
+                    </td>
+                    <td className="quota-grid__expired-at" title={readExpiredAt(item) || undefined}>
+                      {renderShortTimestamp(readExpiredAt(item))}
                     </td>
                     <td className="quota-grid__updated-at" title={item.last_query_at || undefined}>
                       {renderShortTimestamp(item.last_query_at)}

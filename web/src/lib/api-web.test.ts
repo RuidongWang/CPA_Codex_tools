@@ -6,6 +6,8 @@ import {
   loadPayloadCache,
   loadRuntimeConfig,
   queryCachedAccounts,
+  runKeeperDirectAction,
+  runKeeperMaintenance,
   savePayloadCache,
   saveRuntimeConfig,
   syncAccountPriorities,
@@ -19,6 +21,12 @@ const demoConfig: RuntimeConfig = {
   cpaBaseUrl: "https://cpa.example/",
   managementKey: "example-management-key",
   queryConcurrency: 2,
+  keeperSettings: {
+    quotaThreshold: 100,
+    expiryThresholdDays: 3,
+    enableRefresh: true,
+    workerThreads: 2,
+  },
   priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
 };
 
@@ -69,6 +77,32 @@ function quotaUsageResponse(remaining5h = 60, remaining7d = 90, reset5h = 1_777_
         secondary_window: { limit_window_seconds: 604800, used_percent: 100 - remaining7d, reset_at: reset7d },
       },
     }),
+  });
+}
+
+function authFilesResponse(overrides: Record<string, unknown> = {}): Response {
+  return jsonResponse({
+    files: [
+      {
+        provider: "codex",
+        name: "codex-a@example.com-free.json",
+        email: "a@example.com",
+        plan_type: "free",
+        chatgpt_account_id: "acct-a",
+        auth_index: "idx-a",
+        priority: "10",
+        ...overrides,
+      },
+    ],
+  });
+}
+
+function authDownloadResponse(overrides: Record<string, unknown> = {}): Response {
+  return jsonResponse({
+    email: "a@example.com",
+    account_id: "acct-a",
+    expired: "2026-05-09T08:30:00+08:00",
+    ...overrides,
   });
 }
 
@@ -321,11 +355,13 @@ describe("browser runtime api", () => {
   });
 
   it("queryCachedAccounts 在浏览器里通过 CPA api-call 查询并发出进度", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(quotaUsageResponse());
 
     const progress: Array<{ completed: number; total: number; currentLabel: string }> = [];
     const payload = await queryCachedAccounts(demoConfig, [demoItem], (event) => progress.push(event));
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[2] as [string, RequestInit];
     const requestBody = JSON.parse(String(init.body));
 
     expect(url).toBe("https://cpa.example/v0/management/api-call");
@@ -350,7 +386,72 @@ describe("browser runtime api", () => {
     expect(progress).toEqual([expect.objectContaining({ completed: 1, total: 1, currentLabel: "a@example.com" })]);
   });
 
+  it("queryCachedAccounts 会先刷新 auth-files 并把 expired 写入查询结果", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse({ expired: "2026-05-09T08:30:00+08:00" }));
+    fetchMock.mockResolvedValueOnce(authDownloadResponse({ expired: "2026-05-09T08:30:00+08:00" }));
+    fetchMock.mockResolvedValueOnce(quotaUsageResponse());
+
+    const payload = await queryCachedAccounts(demoConfig, [{ ...demoItem, expired: "2026-05-01T00:00:00+08:00" }]);
+    const [authUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [downloadUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [quotaUrl] = fetchMock.mock.calls[2] as [string, RequestInit];
+
+    expect(authUrl).toBe("https://cpa.example/v0/management/auth-files");
+    expect(downloadUrl).toBe("https://cpa.example/v0/management/auth-files/download?name=codex-a%40example.com-free.json");
+    expect(quotaUrl).toBe("https://cpa.example/v0/management/api-call");
+    expect(payload.items[0]).toEqual(
+      expect.objectContaining({
+        auth_index: "idx-a",
+        expired: "2026-05-09T08:30:00+08:00",
+        status: "healthy",
+      }),
+    );
+  });
+
+  it("queryCachedAccounts 会把 refreshed expired 写入本地快照供后续列表恢复", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse({ expired: "2026-05-09T08:30:00+08:00" }));
+    fetchMock.mockResolvedValueOnce(authDownloadResponse({ expired: "2026-05-09T08:30:00+08:00" }));
+    fetchMock.mockResolvedValueOnce(quotaUsageResponse());
+    await queryCachedAccounts(demoConfig, [demoItem]);
+    fetchMock.mockResolvedValueOnce(authFilesResponse({ expired: undefined }));
+
+    const payload = await fetchAccountList(demoConfig);
+
+    expect(payload.items[0]).toEqual(
+      expect.objectContaining({
+        auth_index: "idx-a",
+        expired: "2026-05-09T08:30:00+08:00",
+        status: "healthy",
+      }),
+    );
+  });
+
+  it("queryCachedAccounts 在列表摘要没有 expired 时会下载账号文件更新 token 过期时间", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse({ expired: undefined }));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        email: "a@example.com",
+        account_id: "acct-a",
+        expired: "2026-05-10T09:15:00+08:00",
+      }),
+    );
+    fetchMock.mockResolvedValueOnce(quotaUsageResponse());
+
+    const payload = await queryCachedAccounts(demoConfig, [{ ...demoItem, expired: "2026-05-01T00:00:00+08:00" }]);
+    const [downloadUrl] = fetchMock.mock.calls[1] as [string, RequestInit];
+
+    expect(downloadUrl).toBe("https://cpa.example/v0/management/auth-files/download?name=codex-a%40example.com-free.json");
+    expect(payload.items[0]).toEqual(
+      expect.objectContaining({
+        expired: "2026-05-10T09:15:00+08:00",
+        status: "healthy",
+      }),
+    );
+  });
+
   it("successful Web queryCachedAccounts writes a quota snapshot with the 5h reset label as quota_updated_at", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(quotaUsageResponse(55, 88));
 
     const queried = await queryCachedAccounts(demoConfig, [demoItem]);
@@ -390,9 +491,13 @@ describe("browser runtime api", () => {
   });
 
   it("failed Web query preserves existing quota_updated_at when merged through a later list load", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(quotaUsageResponse(64, 91));
     const successful = await queryCachedAccounts(demoConfig, [demoItem]);
     const quotaUpdatedAt = successful.items[0].quota_updated_at;
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(jsonResponse({ status_code: 503, body: "upstream unavailable" }));
 
     const failed = await queryCachedAccounts(demoConfig, [demoItem]);
@@ -434,6 +539,8 @@ describe("browser runtime api", () => {
   });
 
   it("fresh fetchAccountList merges quota snapshots into unknown list rows", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(quotaUsageResponse(42, 73));
     const queried = await queryCachedAccounts(demoConfig, [demoItem]);
     fetchMock.mockResolvedValueOnce(
@@ -469,6 +576,8 @@ describe("browser runtime api", () => {
   });
 
   it("clearLocalCache clears quota snapshots", async () => {
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockResolvedValueOnce(quotaUsageResponse(33, 66));
     await queryCachedAccounts(demoConfig, [demoItem]);
     fetchMock.mockResolvedValueOnce(
@@ -504,6 +613,8 @@ describe("browser runtime api", () => {
 
   it("queryCachedAccounts 在单账号 CPA 请求卡住时会超时收敛成错误结果", async () => {
     vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(authFilesResponse());
+    fetchMock.mockResolvedValueOnce(authDownloadResponse());
     fetchMock.mockImplementationOnce((_url: string, init?: RequestInit) => {
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => {
@@ -565,6 +676,203 @@ describe("browser runtime api", () => {
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(String(init.body))).toEqual({ name: "codex-a@example.com-free.json", priority: 77 });
     expect(progress).toEqual([expect.objectContaining({ completed: 1, total: 1, currentLabel: "codex-a@example.com-free.json" })]);
+  });
+
+  it("runKeeperDirectAction 可以直接禁用选中的证书", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const progress: Array<{ completed: number; total: number; currentLabel: string }> = [];
+    const result = await runKeeperDirectAction(demoConfig, [demoItem], "disable", (event) => progress.push(event));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://cpa.example/v0/management/auth-files/status");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ name: "codex-a@example.com-free.json", disabled: true });
+    expect(result.summary).toEqual(expect.objectContaining({ dry_run: false, total: 1, disabled: 1, errors: 0 }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ action: "disable", applied: true, reason: "已手动禁用证书" }));
+    expect(progress).toEqual([expect.objectContaining({ completed: 1, total: 1, currentLabel: "a@example.com" })]);
+  });
+
+  it("runKeeperDirectAction 可以直接删除选中的证书", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const result = await runKeeperDirectAction(demoConfig, [demoItem], "delete");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://cpa.example/v0/management/auth-files?name=codex-a%40example.com-free.json");
+    expect(init.method).toBe("DELETE");
+    expect(result.summary).toEqual(expect.objectContaining({ dry_run: false, total: 1, dead: 1, errors: 0 }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ action: "delete", applied: true, reason: "已手动删除证书" }));
+  });
+
+  it("runKeeperDirectAction 可以直接刷新选中的证书", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T00:00:00Z"));
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          email: "a@example.com",
+          access_token: "old-access-token",
+          refresh_token: "old-refresh-token",
+          id_token: "old-id-token",
+          account_id: "acct-a",
+          disabled: true,
+          expired: "2026-05-04T00:00:00Z",
+          type: "codex",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status_code: 200,
+          body: JSON.stringify({
+            access_token: "new-access-token",
+            refresh_token: "new-refresh-token",
+            id_token: "new-id-token",
+            expires_in: 864000,
+          }),
+        }),
+      )
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const result = await runKeeperDirectAction(demoConfig, [demoItem], "refresh");
+    const [downloadUrl] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [refreshUrl, refreshInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [uploadUrl, uploadInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const [statusUrl, statusInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    const uploadedAuth = JSON.parse(String(uploadInit.body));
+
+    expect(downloadUrl).toBe("https://cpa.example/v0/management/auth-files/download?name=codex-a%40example.com-free.json");
+    expect(refreshUrl).toBe("https://cpa.example/v0/management/api-call");
+    expect(JSON.parse(String(refreshInit.body))).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        url: "https://auth.openai.com/oauth/token",
+        data: expect.stringContaining("old-refresh-token"),
+      }),
+    );
+    expect(uploadUrl).toBe("https://cpa.example/v0/management/auth-files?name=codex-a%40example.com-free.json");
+    expect(uploadedAuth).toEqual(
+      expect.objectContaining({
+        access_token: "new-access-token",
+        refresh_token: "new-refresh-token",
+        id_token: "new-id-token",
+        expired: "2026-05-13T00:00:00.000Z",
+        last_refresh: "2026-05-03T00:00:00.000Z",
+      }),
+    );
+    expect(statusUrl).toBe("https://cpa.example/v0/management/auth-files/status");
+    expect(JSON.parse(String(statusInit.body))).toEqual({ name: "codex-a@example.com-free.json", disabled: true });
+    expect(result.summary).toEqual(expect.objectContaining({ dry_run: false, total: 1, refreshed: 1, errors: 0 }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ action: "refresh", applied: true, refreshed: true, reason: "已手动刷新证书" }));
+  });
+
+  it("runKeeperMaintenance 演练模式会生成禁用动作但不写远端", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          email: "a@example.com",
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          account_id: "acct-a",
+          disabled: false,
+          expired: "2099-01-01T00:00:00Z",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status_code: 200,
+          body: JSON.stringify({
+            plan_type: "free",
+            rate_limit: {
+              primary_window: { used_percent: 100, limit_window_seconds: 604800 },
+              secondary_window: null,
+            },
+            credits: { has_credits: false },
+          }),
+        }),
+      );
+
+    const result = await runKeeperMaintenance(demoConfig, [demoItem], { dryRun: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.summary).toEqual(expect.objectContaining({ dry_run: true, total: 1, disabled: 1, dead: 0 }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ action: "disable", applied: false, reason: "Week额度 100% >= 100%" }));
+  });
+
+  it("runKeeperMaintenance 执行模式会刷新已禁用且临近过期的 token 并上传回 CPA", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T00:00:00Z"));
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          email: "a@example.com",
+          access_token: "old-access-token",
+          refresh_token: "old-refresh-token",
+          id_token: "old-id-token",
+          account_id: "acct-a",
+          disabled: true,
+          expired: "2026-05-04T00:00:00Z",
+          type: "codex",
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status_code: 200,
+          body: JSON.stringify({
+            plan_type: "free",
+            rate_limit: {
+              primary_window: { used_percent: 100, limit_window_seconds: 604800 },
+              secondary_window: null,
+            },
+            credits: { has_credits: false },
+          }),
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status_code: 200,
+          body: JSON.stringify({
+            access_token: "new-access-token",
+            refresh_token: "new-refresh-token",
+            id_token: "new-id-token",
+            expires_in: 864000,
+          }),
+        }),
+      )
+      .mockResolvedValueOnce(new Response("", { status: 200 }))
+      .mockResolvedValueOnce(new Response("", { status: 200 }));
+
+    const result = await runKeeperMaintenance(demoConfig, [demoItem], { dryRun: false });
+    const [refreshUrl, refreshInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const refreshBody = JSON.parse(String(refreshInit.body));
+    const [uploadUrl, uploadInit] = fetchMock.mock.calls[3] as [string, RequestInit];
+    const uploadedAuth = JSON.parse(String(uploadInit.body));
+    const [statusUrl, statusInit] = fetchMock.mock.calls[4] as [string, RequestInit];
+
+    expect(refreshUrl).toBe("https://cpa.example/v0/management/api-call");
+    expect(refreshBody).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        url: "https://auth.openai.com/oauth/token",
+        data: expect.stringContaining("old-refresh-token"),
+      }),
+    );
+    expect(uploadUrl).toBe("https://cpa.example/v0/management/auth-files?name=codex-a%40example.com-free.json");
+    expect(uploadInit.method).toBe("POST");
+    expect(uploadedAuth).toEqual(
+      expect.objectContaining({
+        access_token: "new-access-token",
+        refresh_token: "new-refresh-token",
+        id_token: "new-id-token",
+        expired: "2026-05-13T00:00:00.000Z",
+        last_refresh: "2026-05-03T00:00:00.000Z",
+      }),
+    );
+    expect(statusUrl).toBe("https://cpa.example/v0/management/auth-files/status");
+    expect(JSON.parse(String(statusInit.body))).toEqual({ name: "codex-a@example.com-free.json", disabled: true });
+    expect(result.summary).toEqual(expect.objectContaining({ dry_run: false, total: 1, refreshed: 1, refresh_candidates: 1 }));
+    expect(result.items[0]).toEqual(expect.objectContaining({ action: "refresh", applied: true, refresh_candidate: true, outcome: "alive" }));
   });
 
   it("loadRuntimeConfig 会把旧 localStorage key 迁移到固定缓存命名空间", async () => {

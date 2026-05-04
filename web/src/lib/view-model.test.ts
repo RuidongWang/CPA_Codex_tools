@@ -1,7 +1,7 @@
 import type { AccountItem } from "../types";
 import { buildOverviewStats, cycleSort, sortItems, type SortState } from "./view-model";
 
-function makeAccount(authIndex: string, quotaUpdatedAt: string | null): AccountItem {
+function makeAccount(authIndex: string, quotaUpdatedAt: string | null, expired: string | null = null): AccountItem {
   return {
     name: `${authIndex}.json`,
     email: `${authIndex}@example.com`,
@@ -15,6 +15,7 @@ function makeAccount(authIndex: string, quotaUpdatedAt: string | null): AccountI
     error: "",
     last_query_at: null,
     quota_updated_at: quotaUpdatedAt,
+    expired: expired ?? undefined,
   };
 }
 
@@ -84,11 +85,33 @@ describe("sortItems", () => {
     expect(asc.map((item) => item.auth_index)).toEqual(["earlier", "later", "missing"]);
     expect(desc.map((item) => item.auth_index)).toEqual(["later", "earlier", "missing"]);
   });
+
+  it("sorts by certificate expiration time with empty values at the bottom", () => {
+    const items = [
+      makeAccount("missing", null, null),
+      makeAccount("later", null, "2026-05-08T16:45:00+08:00"),
+      makeAccount("earlier", null, "2026-05-04T09:15:00+08:00"),
+    ];
+
+    const asc = sortItems(items, { key: "expiredAt", direction: "asc" });
+    const desc = sortItems(items, { key: "expiredAt", direction: "desc" });
+
+    expect(asc.map((item) => item.auth_index)).toEqual(["earlier", "later", "missing"]);
+    expect(desc.map((item) => item.auth_index)).toEqual(["later", "earlier", "missing"]);
+  });
 });
 
 describe("cycleSort", () => {
   it("cycles quota updated time sorting back to the default state", () => {
     const key: Exclude<SortState["key"], "default"> = "quotaUpdatedAt";
+
+    expect(cycleSort({ key: "default", direction: "none" }, key)).toEqual({ key, direction: "asc" });
+    expect(cycleSort({ key, direction: "asc" }, key)).toEqual({ key, direction: "desc" });
+    expect(cycleSort({ key, direction: "desc" }, key)).toEqual({ key: "default", direction: "none" });
+  });
+
+  it("cycles certificate expiration sorting back to the default state", () => {
+    const key: Exclude<SortState["key"], "default"> = "expiredAt";
 
     expect(cycleSort({ key: "default", direction: "none" }, key)).toEqual({ key, direction: "asc" });
     expect(cycleSort({ key, direction: "asc" }, key)).toEqual({ key, direction: "desc" });

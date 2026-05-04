@@ -70,6 +70,8 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
     clearLocalCache: vi.fn(),
     fetchAccountList: vi.fn(),
     queryCachedAccounts: vi.fn(),
+    runKeeperDirectAction: vi.fn(),
+    runKeeperMaintenance: vi.fn(),
     downloadSelectedAccounts: vi.fn(),
     querySingleAccount: vi.fn(),
     syncAccountPriorities: vi.fn(),
@@ -79,6 +81,12 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
 vi.mock("./lib/api", () => ({
   DEFAULT_CPA_BASE_URL: "https://cpa.example/",
   DEFAULT_QUERY_CONCURRENCY: 6,
+  DEFAULT_KEEPER_SETTINGS: {
+    quotaThreshold: 100,
+    expiryThresholdDays: 3,
+    enableRefresh: true,
+    workerThreads: 6,
+  },
   loadRuntimeConfig: mockApi.loadRuntimeConfig,
   loadPayloadCache: mockApi.loadPayloadCache,
   saveRuntimeConfig: mockApi.saveRuntimeConfig,
@@ -86,6 +94,8 @@ vi.mock("./lib/api", () => ({
   clearLocalCache: mockApi.clearLocalCache,
   fetchAccountList: mockApi.fetchAccountList,
   queryCachedAccounts: mockApi.queryCachedAccounts,
+  runKeeperDirectAction: mockApi.runKeeperDirectAction,
+  runKeeperMaintenance: mockApi.runKeeperMaintenance,
   downloadSelectedAccounts: mockApi.downloadSelectedAccounts,
   querySingleAccount: mockApi.querySingleAccount,
   syncAccountPriorities: mockApi.syncAccountPriorities,
@@ -230,6 +240,80 @@ beforeEach(() => {
   mockApi.clearLocalCache.mockResolvedValue(undefined);
   mockApi.fetchAccountList.mockResolvedValue(listPayload);
   mockApi.queryCachedAccounts.mockImplementation(async (_config, items: typeof listPayload.items) => buildQueryPayload(items.map((item) => item.auth_index)));
+  mockApi.runKeeperDirectAction.mockImplementation(async (_config, items: typeof listPayload.items, action: "disable" | "refresh" | "delete") => ({
+    summary: {
+      generated_at: "2026-04-25T01:11:00+08:00",
+      dry_run: false,
+      total: items.length,
+      alive: action === "delete" ? 0 : items.length,
+      dead: action === "delete" ? items.length : 0,
+      disabled: action === "disable" ? items.length : 0,
+      enabled: 0,
+      refreshed: action === "refresh" ? items.length : 0,
+      refresh_candidates: 0,
+      skipped: 0,
+      network_error: 0,
+      errors: 0,
+    },
+    items: items.map((item) => ({
+      name: item.name,
+      email: item.email,
+      auth_index: item.auth_index,
+      plan_type: item.plan_type,
+      disabled: action === "disable",
+      expired: item.expired ?? "",
+      remaining_label: "已处理",
+      has_refresh_token: Boolean(item.has_refresh_token),
+      primary_label: "",
+      primary_used_percent: null,
+      secondary_label: "",
+      secondary_used_percent: null,
+      action,
+      outcome: action === "delete" ? "dead" : "alive",
+      applied: true,
+      refresh_candidate: false,
+      refreshed: action === "refresh",
+      reason: action === "disable" ? "已手动禁用证书" : action === "refresh" ? "已手动刷新证书" : "已手动删除证书",
+    })),
+  }));
+  mockApi.runKeeperMaintenance.mockResolvedValue({
+    summary: {
+      generated_at: "2026-04-25T01:10:00+08:00",
+      dry_run: true,
+      total: 3,
+      alive: 2,
+      dead: 1,
+      disabled: 1,
+      enabled: 0,
+      refreshed: 0,
+      refresh_candidates: 0,
+      skipped: 0,
+      network_error: 0,
+      errors: 0,
+    },
+    items: [
+      {
+        name: "codex-free.json",
+        email: "free@example.com",
+        auth_index: "idx-free",
+        plan_type: "free",
+        disabled: false,
+        expired: "2099-01-01T00:00:00Z",
+        remaining_label: "99天",
+        has_refresh_token: true,
+        primary_label: "Week",
+        primary_used_percent: 100,
+        secondary_label: "",
+        secondary_used_percent: null,
+        action: "disable",
+        outcome: "alive",
+        applied: false,
+        refresh_candidate: false,
+        refreshed: false,
+        reason: "Week额度 100% >= 100%",
+      },
+    ],
+  });
   mockApi.downloadSelectedAccounts.mockResolvedValue([]);
   mockApi.syncAccountPriorities.mockResolvedValue(undefined);
 });
@@ -241,13 +325,15 @@ afterEach(() => {
 
 describe("App", () => {
   it("README 演示模式会直接加载虚构数据而不是请求真实接口", async () => {
+    const user = userEvent.setup();
     window.history.replaceState({}, "", "/?demo=readme");
 
     render(<App />);
 
     expect(await screen.findByText("已载入 README 演示数据")).toBeInTheDocument();
-    expect(screen.getByDisplayValue(README_DEMO_CONFIG.cpaBaseUrl)).toBeInTheDocument();
     expect(screen.getByText("ops-team-alpha@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "配置页面" }));
+    expect(screen.getByDisplayValue(README_DEMO_CONFIG.cpaBaseUrl)).toBeInTheDocument();
     expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
     expect(mockApi.loadRuntimeConfig).not.toHaveBeenCalled();
   });
@@ -280,7 +366,8 @@ describe("App", () => {
 
     expect((await screen.findAllByText("Codex 额度监控台")).length).toBe(1);
     expect(screen.queryByText("全局额度监控")).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("https://cpa.example/")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("https://cpa.example/")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("按邮箱搜索")).toBeInTheDocument();
     expect(await screen.findByText("free@example.com")).toBeInTheDocument();
     expect(screen.getAllByText("free").length).toBeGreaterThan(0);
     expect(screen.getByRole("columnheader", { name: "邮箱" })).toBeInTheDocument();
@@ -298,6 +385,9 @@ describe("App", () => {
     expect(screen.queryByText("notifications")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开设置" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "status-all" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("状态摘要")).not.toBeInTheDocument();
+    expect(screen.queryByText("3 个结果")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 已选")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "all" })).toHaveTextContent("全部");
     expect(screen.getByRole("button", { name: "free" })).toHaveTextContent("free");
     expect(screen.getByRole("button", { name: "plus" })).toHaveTextContent("plus");
@@ -306,14 +396,173 @@ describe("App", () => {
     expect(screen.queryByText("额度巡检主表")).not.toBeInTheDocument();
   });
 
+  it("计划筛选移动到主内容横向筛选条", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    const pageNav = screen.getByRole("navigation", { name: "页面导航" });
+    const planFilterBar = screen.getByRole("navigation", { name: "计划筛选" });
+
+    expect(planFilterBar).toHaveClass("plan-filter-strip");
+    expect(within(planFilterBar).getByRole("button", { name: "all" })).toHaveTextContent("全部");
+    expect(within(planFilterBar).getByRole("button", { name: "free" })).toHaveTextContent("free");
+    expect(within(planFilterBar).getByRole("button", { name: "team" })).toHaveTextContent("team");
+    expect(within(planFilterBar).getByPlaceholderText("按邮箱搜索")).toBeInTheDocument();
+    expect(within(pageNav).queryByRole("button", { name: "free" })).not.toBeInTheDocument();
+  });
+
+  it("连接配置放在独立配置页面", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("https://cpa.example/")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "配置页面" }));
+
+    const configPage = screen.getByRole("region", { name: "配置页面" });
+    expect(within(configPage).getByRole("region", { name: "连接配置" })).toBeInTheDocument();
+    expect(within(configPage).getByDisplayValue("https://cpa.example/")).toBeInTheDocument();
+    expect(within(configPage).getByDisplayValue("demo-key")).toBeInTheDocument();
+
+    await user.click(within(configPage).getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cpaBaseUrl: "https://cpa.example/",
+          managementKey: "demo-key",
+        }),
+      );
+    });
+  });
+
   it("新版监控台展示操作台、账号列表和排障详情分区标题", async () => {
     render(<App />);
 
     expect(await screen.findByText("free@example.com")).toBeInTheDocument();
     expect(screen.getByText("操作台")).toBeInTheDocument();
     expect(screen.getByText("账号列表")).toBeInTheDocument();
+    expect(screen.queryByText("账号维护监控")).not.toBeInTheDocument();
     expect(screen.queryByText("排障详情")).not.toBeInTheDocument();
-    expect(screen.getByText("当前账号")).toBeInTheDocument();
+    expect(screen.queryByText("当前账号")).not.toBeInTheDocument();
+  });
+
+  it("Keeper 放在独立操作页面中", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    expect(within(keeperPage).getByText("账号维护监控")).toBeInTheDocument();
+    expect(within(keeperPage).getByText("刷新配置")).toBeInTheDocument();
+    expect(within(keeperPage).getByText("账号列表")).toBeInTheDocument();
+    expect(within(keeperPage).getByText("free@example.com")).toBeInTheDocument();
+    expect(within(keeperPage).queryByText("等待 Keeper 运行结果")).not.toBeInTheDocument();
+  });
+
+  it("Keeper 页可以对账号列表选中项直接禁用、刷新和删除证书", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    expect(within(keeperPage).getByRole("button", { name: "设置禁用 (0)" })).toBeDisabled();
+
+    await user.click(within(keeperPage).getByRole("checkbox", { name: "选择 free@example.com" }));
+    await user.click(within(keeperPage).getByRole("button", { name: "设置禁用 (1)" }));
+
+    await waitFor(() => {
+      expect(mockApi.runKeeperDirectAction).toHaveBeenLastCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [expect.objectContaining({ auth_index: "idx-free" })],
+        "disable",
+        expect.any(Function),
+      );
+    });
+    expect(await screen.findByText("已禁用 1 个选中证书")).toBeInTheDocument();
+    await waitFor(() => expect(within(keeperPage).getByRole("button", { name: "刷新证书 (0)" })).toBeDisabled());
+
+    await user.click(within(keeperPage).getByRole("checkbox", { name: "选择 free@example.com" }));
+    await user.click(within(keeperPage).getByRole("button", { name: "刷新证书 (1)" }));
+
+    await waitFor(() => {
+      expect(mockApi.runKeeperDirectAction).toHaveBeenLastCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [expect.objectContaining({ auth_index: "idx-free" })],
+        "refresh",
+        expect.any(Function),
+      );
+    });
+    expect(await screen.findByText("已刷新 1 个选中证书")).toBeInTheDocument();
+    await waitFor(() => expect(within(keeperPage).getByRole("button", { name: "删除证书 (0)" })).toBeDisabled());
+
+    await user.click(within(keeperPage).getByRole("checkbox", { name: "选择 free@example.com" }));
+    await user.click(within(keeperPage).getByRole("button", { name: "删除证书 (1)" }));
+
+    await waitFor(() => {
+      expect(mockApi.runKeeperDirectAction).toHaveBeenLastCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [expect.objectContaining({ auth_index: "idx-free" })],
+        "delete",
+        expect.any(Function),
+      );
+    });
+    expect(await screen.findByText("已删除 1 个选中证书")).toBeInTheDocument();
+  });
+
+  it("Keeper 演练会调用维护接口并展示结果", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+    await user.click(screen.getByRole("button", { name: "演练扫描" }));
+
+    await waitFor(() => {
+      expect(mockApi.runKeeperMaintenance).toHaveBeenCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        listPayload.items,
+        { dryRun: true },
+        expect.any(Function),
+      );
+    });
+    expect(await screen.findByText("Keeper 演练完成：删除 1，禁用 1，启用 0，刷新 0")).toBeInTheDocument();
+    expect(screen.getByText("Week额度 100% >= 100%")).toBeInTheDocument();
+  });
+
+  it("Keeper 操作页可以保存刷新配置", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    await user.clear(within(keeperPage).getByLabelText("刷新阈值天数"));
+    await user.type(within(keeperPage).getByLabelText("刷新阈值天数"), "5");
+    await user.clear(within(keeperPage).getByLabelText("维护并发数"));
+    await user.type(within(keeperPage).getByLabelText("维护并发数"), "9");
+    await user.click(within(keeperPage).getByLabelText("维护时自动刷新临期证书"));
+    await user.click(within(keeperPage).getByRole("button", { name: "保存 Keeper 配置" }));
+
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queryConcurrency: 6,
+          keeperSettings: expect.objectContaining({
+            quotaThreshold: 100,
+            expiryThresholdDays: 5,
+            enableRefresh: false,
+            workerThreads: 9,
+          }),
+        }),
+      );
+    });
   });
 
   it("标题栏只保留主标题，不再显示副标题", async () => {
@@ -387,10 +636,9 @@ describe("App", () => {
       await user.click(row);
     }
 
-    expect(screen.getByText("当前账号")).toBeInTheDocument();
-    expect(screen.getByText("账号索引")).toBeInTheDocument();
-    expect(screen.getByText("账号 ID")).toBeInTheDocument();
-    expect(screen.getByText("acct-free")).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByText("当前账号")).not.toBeInTheDocument();
+    expect(screen.queryByText("账号索引")).not.toBeInTheDocument();
   });
 
   it("切换分组后只按当前分组统计选中账号", async () => {
@@ -483,6 +731,7 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("free@example.com");
+    await user.click(screen.getByRole("button", { name: "配置页面" }));
     expect(screen.getByDisplayValue("https://cpa.example/")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开设置" }));
@@ -491,10 +740,11 @@ describe("App", () => {
     await waitFor(() => {
       expect(mockApi.clearLocalCache).toHaveBeenCalledTimes(1);
     });
-    expect(screen.getByText("本地缓存已清空，等待输入管理配置")).toBeInTheDocument();
     expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("https://cpa.example/")).toHaveValue("");
     expect(screen.getByPlaceholderText("输入管理密钥")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "额度页面" }));
+    expect(screen.getByText("本地缓存已清空，等待输入管理配置")).toBeInTheDocument();
   });
 
   it("会拦截页面右键菜单", async () => {
@@ -695,18 +945,17 @@ describe("App", () => {
     });
   });
 
-  it("可以在详情区把单个账号优先级改成本地草稿", async () => {
+  it("额度页不再展示单账号详情和优先级编辑入口", async () => {
     const user = userEvent.setup();
     render(<App />);
 
     await screen.findByText("free@example.com");
     await user.click(screen.getByText("free@example.com"));
-    await user.clear(screen.getByRole("spinbutton", { name: "优先级输入框" }));
-    await user.type(screen.getByRole("spinbutton", { name: "优先级输入框" }), "77");
-    await user.click(screen.getByRole("button", { name: "应用到本地草稿" }));
 
-    expect(screen.getAllByText("77").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("未同步").length).toBeGreaterThan(0);
+    expect(screen.queryByText("当前账号")).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "优先级输入框" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "应用到本地草稿" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "恢复远端值" })).not.toBeInTheDocument();
   });
 
   it("可以一键清除本地优先级草稿并恢复远端状态", async () => {
@@ -714,16 +963,13 @@ describe("App", () => {
     render(<App />);
 
     await screen.findByText("free@example.com");
-    await user.click(screen.getByText("free@example.com"));
-    await user.clear(screen.getByRole("spinbutton", { name: "优先级输入框" }));
-    await user.type(screen.getByRole("spinbutton", { name: "优先级输入框" }), "77");
-    await user.click(screen.getByRole("button", { name: "应用到本地草稿" }));
+    await user.click(screen.getByRole("button", { name: "批量设置优先级" }));
+    await user.click(screen.getByRole("button", { name: "生成本地草稿" }));
     expect(screen.getAllByText("未同步").length).toBeGreaterThan(0);
 
     await user.click(screen.getByRole("button", { name: "清除本地草稿" }));
 
     expect(screen.getByText("已清除本地优先级草稿")).toBeInTheDocument();
-    expect(screen.queryByText("77")).not.toBeInTheDocument();
     expect(screen.queryByText("未同步")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "同步到远端" })).toBeDisabled();
   });
