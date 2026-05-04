@@ -40,6 +40,7 @@ export interface QuotaWindow {
   label: string;
   used_percent: number | null;
   remaining_percent: number | null;
+  reset_at?: string | null;
   reset_label: string;
   exhausted: boolean;
 }
@@ -64,6 +65,9 @@ export interface AccountItem {
   error: string;
   timings_ms?: Record<string, number>;
   last_query_at: string | null;
+  quota_reset_at?: string | null;
+  quota_reset_label?: string | null;
+  // Deprecated compatibility field for older browser caches. New code should use quota_reset_*.
   quota_updated_at: string | null;
 }
 

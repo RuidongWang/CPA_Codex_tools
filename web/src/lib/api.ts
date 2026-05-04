@@ -65,6 +65,8 @@ interface WebQuotaReport extends WebAuthRecord {
   error: string;
   timings_ms: Record<string, number>;
   last_query_at: string | null;
+  quota_reset_at: string | null;
+  quota_reset_label: string | null;
   quota_updated_at: string | null;
 }
 
@@ -92,6 +94,8 @@ function emptyPayload(): PayloadEnvelope {
 function normalizeItem(input: Partial<AccountItem>): AccountItem {
   const remotePriority = typeof input.remote_priority === "number" ? input.remote_priority : input.priority;
   const windows = Array.isArray(input.windows) ? input.windows : [];
+  const quotaReset = readPrimaryQuotaReset(windows);
+  const legacyQuotaLabel = typeof input.quota_updated_at === "string" ? input.quota_updated_at : null;
   return {
     name: input.name ?? "",
     email: input.email ?? "",
@@ -112,7 +116,9 @@ function normalizeItem(input: Partial<AccountItem>): AccountItem {
     error: input.error ?? "",
     timings_ms: input.timings_ms ?? {},
     last_query_at: input.last_query_at ?? null,
-    quota_updated_at: readPrimaryQuotaResetLabel(windows) ?? (typeof input.quota_updated_at === "string" ? input.quota_updated_at : null),
+    quota_reset_at: quotaReset.resetAt ?? input.quota_reset_at ?? null,
+    quota_reset_label: quotaReset.label ?? input.quota_reset_label ?? legacyQuotaLabel,
+    quota_updated_at: quotaReset.label ?? legacyQuotaLabel,
   };
 }
 
@@ -349,6 +355,8 @@ function authRecordToItem(record: WebAuthRecord): Partial<AccountItem> {
     additional_windows: [],
     error: "",
     last_query_at: null,
+    quota_reset_at: null,
+    quota_reset_label: null,
     quota_updated_at: null,
   };
 }
@@ -392,9 +400,14 @@ function hasFreshQuota(report: WebQuotaReport): boolean {
   return !report.error && report.windows.length > 0;
 }
 
-function readPrimaryQuotaResetLabel(windows: AccountItem["windows"]): string | null {
-  const resetLabel = windows.find((window) => window.id === "code-5h")?.reset_label ?? null;
-  return resetLabel && resetLabel !== "-" ? resetLabel : null;
+function readPrimaryQuotaReset(windows: AccountItem["windows"]): { resetAt: string | null; label: string | null } {
+  const primaryWindow = windows.find((window) => window.id === "code-5h");
+  const resetAt = primaryWindow?.reset_at ?? null;
+  const resetLabel = primaryWindow?.reset_label ?? null;
+  return {
+    resetAt,
+    label: resetLabel && resetLabel !== "-" ? resetLabel : null,
+  };
 }
 
 function mergeQuotaSnapshotIntoItem(item: AccountItem, snapshot: QuotaSnapshotRecord | undefined): AccountItem {
@@ -412,6 +425,8 @@ function mergeQuotaSnapshotIntoItem(item: AccountItem, snapshot: QuotaSnapshotRe
     error: snapshot.error,
     timings_ms: snapshot.timings_ms,
     last_query_at: snapshot.last_query_at,
+    quota_reset_at: snapshot.quota_reset_at,
+    quota_reset_label: snapshot.quota_reset_label,
     quota_updated_at: snapshot.quota_updated_at,
   });
 }
@@ -449,6 +464,8 @@ function buildQuotaSnapshotFromReport(report: WebQuotaReport, previous: QuotaSna
     error: report.error,
     timings_ms: report.timings_ms,
     last_query_at: report.last_query_at,
+    quota_reset_at: freshQuota ? report.quota_reset_at : (previous?.quota_reset_at ?? null),
+    quota_reset_label: freshQuota ? report.quota_reset_label : (previous?.quota_reset_label ?? previous?.quota_updated_at ?? null),
     quota_updated_at: freshQuota ? report.quota_updated_at : (previous?.quota_updated_at ?? null),
   };
 }
@@ -463,6 +480,8 @@ function mergeQuotaSnapshotIntoReport(report: WebQuotaReport, snapshot: QuotaSna
     error: snapshot.error,
     timings_ms: snapshot.timings_ms,
     last_query_at: snapshot.last_query_at,
+    quota_reset_at: snapshot.quota_reset_at,
+    quota_reset_label: snapshot.quota_reset_label,
     quota_updated_at: snapshot.quota_updated_at,
   };
 }
@@ -659,10 +678,13 @@ function boolFromAny(value: unknown): boolean {
   return value === true || (typeof value === "string" && value.trim().toLowerCase() === "true");
 }
 
-function formatResetLabel(windowValue: Record<string, unknown>): string {
+function readQuotaResetTarget(windowValue: Record<string, unknown>): Date | null {
   const resetAt = numberOrNull(firstPresent(windowValue.reset_at, windowValue.resetAt));
   const resetAfterSeconds = numberOrNull(firstPresent(windowValue.reset_after_seconds, windowValue.resetAfterSeconds));
-  const target = resetAt && resetAt > 0 ? new Date(resetAt * 1000) : resetAfterSeconds && resetAfterSeconds > 0 ? new Date(Date.now() + resetAfterSeconds * 1000) : null;
+  return resetAt && resetAt > 0 ? new Date(resetAt * 1000) : resetAfterSeconds && resetAfterSeconds > 0 ? new Date(Date.now() + resetAfterSeconds * 1000) : null;
+}
+
+function formatResetLabel(target: Date | null): string {
   if (!target) {
     return "-";
   }
@@ -679,7 +701,8 @@ function buildWindow(windowId: string, label: string, rawWindow: unknown, limitR
     return null;
   }
   const directUsed = numberOrNull(firstPresent(windowValue.used_percent, windowValue.usedPercent));
-  const resetLabel = formatResetLabel(windowValue);
+  const resetTarget = readQuotaResetTarget(windowValue);
+  const resetLabel = formatResetLabel(resetTarget);
   const exhaustedHint = boolFromAny(limitReached) || allowed === false;
   const usedPercent = directUsed !== null ? clampFloat(directUsed, 0, 100) : exhaustedHint && resetLabel !== "-" ? 100 : null;
   const remainingPercent = usedPercent === null ? null : clampFloat(100 - usedPercent, 0, 100);
@@ -688,6 +711,7 @@ function buildWindow(windowId: string, label: string, rawWindow: unknown, limitR
     label,
     used_percent: usedPercent,
     remaining_percent: remainingPercent,
+    reset_at: resetTarget ? resetTarget.toISOString() : null,
     reset_label: resetLabel,
     exhausted: usedPercent !== null && usedPercent >= 100,
   };
@@ -781,6 +805,8 @@ async function queryWebRecord(config: RuntimeConfig, input: WebAuthRecord): Prom
     error: "",
     timings_ms: {},
     last_query_at: null,
+    quota_reset_at: null,
+    quota_reset_label: null,
     quota_updated_at: null,
   };
   const finalize = () => {
@@ -788,9 +814,11 @@ async function queryWebRecord(config: RuntimeConfig, input: WebAuthRecord): Prom
     report.timings_ms.query_total_ms = Math.round((performance.now() - startedAt) * 10) / 10;
     report.status = deriveWebStatus(report);
     report.last_query_at = queriedAt;
-    const quotaResetLabel = readPrimaryQuotaResetLabel(report.windows);
-    if (!report.error && quotaResetLabel) {
-      report.quota_updated_at = quotaResetLabel;
+    const quotaReset = readPrimaryQuotaReset(report.windows);
+    if (!report.error && quotaReset.label) {
+      report.quota_reset_at = quotaReset.resetAt;
+      report.quota_reset_label = quotaReset.label;
+      report.quota_updated_at = quotaReset.label;
     }
     return report;
   };

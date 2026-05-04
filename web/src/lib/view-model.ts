@@ -136,7 +136,7 @@ function readUpdatedAt(item: AccountItem): number | null {
 }
 
 function readQuotaUpdatedAt(item: AccountItem): number | null {
-  return parseTimestamp(item.quota_updated_at ?? null);
+  return parseTimestamp(item.quota_reset_at ?? null);
 }
 
 function readExpiredAt(item: AccountItem): number | null {

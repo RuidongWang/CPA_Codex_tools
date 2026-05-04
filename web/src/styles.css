@@ -373,7 +373,6 @@ input {
 .metric-card,
 .scan-progress,
 .grid-panel,
-.detail-panel,
 .config-panel,
 .error-banner {
   border: 1px solid var(--outline);
@@ -929,21 +928,13 @@ button.metric-card:focus-visible {
   line-height: 1;
 }
 
-.grid-panel,
-.detail-panel {
+.grid-panel {
   min-width: 0;
   min-height: 0;
   border-radius: 22px;
-}
-
-.grid-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-}
-
-.detail-panel {
-  overflow: auto;
 }
 
 .grid-panel__header {
@@ -1431,134 +1422,6 @@ button.metric-card:focus-visible {
   color: var(--warning);
   font-size: 11px;
   font-weight: 700;
-}
-
-.detail-panel {
-  padding: 14px;
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  /* 小窗时允许右侧详情独立滚动，避免 7d 窗口等字段被底部截断。 */
-}
-
-.detail-panel__header {
-  display: grid;
-  gap: 6px;
-}
-
-.detail-panel__eyebrow,
-.detail-panel__anchor,
-.detail-panel dt,
-.detail-panel__extra p,
-.detail-panel__error p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.detail-panel__anchor {
-  color: var(--accent-strong);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.detail-panel__header h2 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.18;
-  word-break: break-word;
-}
-
-.detail-panel__section {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid rgba(134, 168, 205, 0.1);
-  border-radius: 16px;
-  background: rgba(8, 14, 22, 0.34);
-}
-
-.detail-panel__section-title {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.detail-panel__grid {
-  display: grid;
-  gap: 14px;
-}
-
-.detail-panel__grid div {
-  display: grid;
-  gap: 4px;
-}
-
-.detail-panel dd {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 13px;
-  word-break: break-word;
-  font-variant-numeric: tabular-nums;
-}
-
-.detail-panel__extra ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.detail-panel__extra li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--text-secondary);
-}
-
-.detail-panel__extra strong,
-.detail-panel__error strong {
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-.detail-panel__error strong {
-  display: block;
-  margin-top: 8px;
-  color: #ffc2c8;
-}
-
-.priority-editor {
-  display: grid;
-  gap: 10px;
-}
-
-.priority-editor input {
-  width: 100%;
-  height: 40px;
-  padding: 0 12px;
-  border: 1px solid rgba(134, 160, 206, 0.2);
-  border-radius: 10px;
-  background: rgba(10, 15, 23, 0.94);
-  color: var(--text-primary);
-  outline: none;
-}
-
-.priority-editor input:focus {
-  border-color: rgba(122, 162, 255, 0.6);
-  box-shadow: inset 0 0 0 1px rgba(122, 162, 255, 0.18);
-}
-
-.priority-editor__actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .settings-dialog__backdrop {
@@ -2266,8 +2129,7 @@ button.metric-card:focus-visible {
     overflow: visible;
   }
 
-  .grid-panel,
-  .detail-panel {
+  .grid-panel {
     border-radius: 18px;
   }
 
@@ -2278,11 +2140,6 @@ button.metric-card:focus-visible {
 
   .grid-panel__header {
     padding: 11px 12px;
-  }
-
-  .detail-panel {
-    max-height: none;
-    overflow: visible;
   }
 
   .account-card-list {

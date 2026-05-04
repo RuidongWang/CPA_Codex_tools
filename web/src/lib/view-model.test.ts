@@ -1,7 +1,7 @@
 import type { AccountItem } from "../types";
 import { buildOverviewStats, cycleSort, sortItems, type SortState } from "./view-model";
 
-function makeAccount(authIndex: string, quotaUpdatedAt: string | null, expired: string | null = null): AccountItem {
+function makeAccount(authIndex: string, quotaResetAt: string | null, expired: string | null = null): AccountItem {
   return {
     name: `${authIndex}.json`,
     email: `${authIndex}@example.com`,
@@ -14,7 +14,9 @@ function makeAccount(authIndex: string, quotaUpdatedAt: string | null, expired: 
     additional_windows: [],
     error: "",
     last_query_at: null,
-    quota_updated_at: quotaUpdatedAt,
+    quota_reset_at: quotaResetAt,
+    quota_reset_label: quotaResetAt ? quotaResetAt.slice(5, 16).replace("T", " ") : null,
+    quota_updated_at: quotaResetAt ? quotaResetAt.slice(5, 16).replace("T", " ") : null,
     expired: expired ?? undefined,
   };
 }
@@ -75,8 +77,8 @@ describe("sortItems", () => {
   it("sorts by quota updated time with empty values at the bottom", () => {
     const items = [
       makeAccount("missing", null),
-      makeAccount("later", "05-03 15:30"),
-      makeAccount("earlier", "05-03 08:15"),
+      makeAccount("later", "2026-05-03T15:30:00+08:00"),
+      makeAccount("earlier", "2026-05-03T08:15:00+08:00"),
     ];
 
     const asc = sortItems(items, { key: "quotaUpdatedAt", direction: "asc" });

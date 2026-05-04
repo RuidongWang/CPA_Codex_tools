@@ -23,6 +23,8 @@ export interface QuotaSnapshotRecord {
   error: string;
   timings_ms: Record<string, number>;
   last_query_at: string | null;
+  quota_reset_at: string | null;
+  quota_reset_label: string | null;
   quota_updated_at: string | null;
 }
 
@@ -126,6 +128,8 @@ function readQuotaSnapshotRecord(record: unknown): QuotaSnapshotRecord | null {
     error: cleanString(raw.error),
     timings_ms: readObject(raw.timings_ms) as Record<string, number>,
     last_query_at: normalizeTimestamp(raw.last_query_at),
+    quota_reset_at: normalizeTimestamp(raw.quota_reset_at),
+    quota_reset_label: normalizeTimestamp(raw.quota_reset_label) ?? normalizeTimestamp(raw.quota_updated_at),
     quota_updated_at: normalizeTimestamp(raw.quota_updated_at),
   };
 }

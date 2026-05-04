@@ -130,7 +130,7 @@ export function buildPriorityPlanPreview(
 
 function readEarliestResetTimestamp(item: AccountItem): number | null {
   const timestamps = item.windows
-    .map((window) => Date.parse(window.reset_label))
+    .map((window) => Date.parse(window.reset_at ?? ""))
     .filter((value) => Number.isFinite(value));
   if (!timestamps.length) {
     return null;

@@ -35,7 +35,7 @@ import {
 } from "./lib/priority";
 import { buildOverviewStats, buildPlanCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
 import { isReadmeDemoMode, README_DEMO_CONFIG, README_DEMO_PAYLOAD } from "./lib/readme-demo";
-import type { KeeperDirectAction, KeeperRunResult, KeeperSettings, PayloadEnvelope, RuntimeConfig } from "./types";
+import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, PayloadEnvelope, RuntimeConfig } from "./types";
 
 const PROGRESS_HOLD_MS = 2000;
 const PROGRESS_FADE_MS = 240;
@@ -721,6 +721,16 @@ export default function App() {
     return "正在删除选中证书";
   }
 
+  function formatKeeperDeleteConfirmMessage(items: AccountItem[]): string {
+    const previewItems = items
+      .slice(0, 5)
+      .map((item) => item.email || item.name || item.auth_index)
+      .filter(Boolean);
+    const previewLabel = previewItems.length ? `\n\n选中账号示例：\n${previewItems.join("\n")}` : "";
+    const remainingLabel = items.length > previewItems.length ? `\n等 ${items.length} 个账号` : "";
+    return `确认删除 ${items.length} 个选中账号的证书/账号配置？这是不可逆操作，删除后无法从 Keeper 恢复。${previewLabel}${remainingLabel}`;
+  }
+
   function formatKeeperDirectActionSuccessLabel(action: KeeperDirectAction, result: KeeperRunResult): string {
     const errors = result.summary.errors + result.summary.network_error;
     const count =
@@ -818,6 +828,10 @@ export default function App() {
     }
 
     const targetItems = keeperSelectedItems;
+    if (action === "delete" && !window.confirm(formatKeeperDeleteConfirmMessage(targetItems))) {
+      return;
+    }
+
     const startedAt = performance.now();
     const title = getKeeperDirectActionTitle(action);
     try {

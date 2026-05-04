@@ -321,6 +321,7 @@ beforeEach(() => {
 afterEach(() => {
   window.history.replaceState({}, "", "/");
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("App", () => {
@@ -502,8 +503,12 @@ describe("App", () => {
     await waitFor(() => expect(within(keeperPage).getByRole("button", { name: "删除证书 (0)" })).toBeDisabled());
 
     await user.click(within(keeperPage).getByRole("checkbox", { name: "选择 free@example.com" }));
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     await user.click(within(keeperPage).getByRole("button", { name: "删除证书 (1)" }));
 
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("确认删除 1 个选中账号的证书/账号配置"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("不可逆操作"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("free@example.com"));
     await waitFor(() => {
       expect(mockApi.runKeeperDirectAction).toHaveBeenLastCalledWith(
         expect.objectContaining({ managementKey: "demo-key" }),
@@ -513,6 +518,27 @@ describe("App", () => {
       );
     });
     expect(await screen.findByText("已删除 1 个选中证书")).toBeInTheDocument();
+  });
+
+  it("Keeper 页取消删除证书确认时不会调用直接动作接口", async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    await user.click(within(keeperPage).getByRole("checkbox", { name: "选择 free@example.com" }));
+    await user.click(within(keeperPage).getByRole("button", { name: "删除证书 (1)" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("确认删除 1 个选中账号的证书/账号配置"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("不可逆操作"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("free@example.com"));
+    expect(mockApi.runKeeperDirectAction).not.toHaveBeenCalled();
+    expect(within(keeperPage).getByRole("button", { name: "删除证书 (1)" })).toBeEnabled();
+    expect(screen.queryByText("正在删除选中证书")).not.toBeInTheDocument();
+    expect(screen.queryByText("删除证书进度")).not.toBeInTheDocument();
   });
 
   it("Keeper 演练会调用维护接口并展示结果", async () => {

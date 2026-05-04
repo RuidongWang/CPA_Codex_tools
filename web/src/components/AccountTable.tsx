@@ -88,7 +88,7 @@ function renderShortTimestamp(value: string | null): string {
 }
 
 function readQuotaUpdatedAt(item: AccountItem): string | null {
-  return item.quota_updated_at ?? null;
+  return item.quota_reset_label ?? item.quota_updated_at ?? null;
 }
 
 function readExpiredAt(item: AccountItem): string | null {
