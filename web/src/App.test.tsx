@@ -912,6 +912,39 @@ describe("App", () => {
     }
   });
 
+  it("批量设置优先级会按当前账号列表排序在分组内降序生成", async () => {
+    const user = userEvent.setup();
+    mockApi.fetchAccountList.mockResolvedValueOnce(
+      makePayload({
+        items: [
+          makeItem({ auth_index: "idx-free", email: "free@example.com", plan_type: "free", priority: 50, remote_priority: 50 }),
+          makeItem({ auth_index: "idx-team-a", email: "team-a@example.com", name: "codex-team-a.json", plan_type: "team", priority: 10, remote_priority: 10 }),
+          makeItem({ auth_index: "idx-team-b", email: "team-b@example.com", name: "codex-team-b.json", plan_type: "team", priority: 90, remote_priority: 90 }),
+        ],
+      }),
+    );
+    render(<App />);
+
+    await screen.findByText("team-b@example.com");
+    await user.click(screen.getByRole("button", { name: "优先级 排序" }));
+    await user.click(screen.getByRole("button", { name: "优先级 排序 升序" }));
+    await user.click(screen.getByRole("button", { name: "批量设置优先级" }));
+    await user.click(screen.getByRole("button", { name: "生成本地草稿" }));
+
+    const teamBRow = screen.getAllByRole("row").find((candidate) => within(candidate).queryByText("team-b@example.com"));
+    const teamARow = screen.getAllByRole("row").find((candidate) => within(candidate).queryByText("team-a@example.com"));
+    expect(teamBRow).toBeDefined();
+    expect(teamARow).toBeDefined();
+    if (teamBRow) {
+      expect(within(teamBRow).getByText("未同步")).toBeInTheDocument();
+      expect(within(teamBRow).getByText("3")).toBeInTheDocument();
+    }
+    if (teamARow) {
+      expect(within(teamARow).getByText("未同步")).toBeInTheDocument();
+      expect(within(teamARow).getByText("2")).toBeInTheDocument();
+    }
+  });
+
   it("同步到远端在缺少新备份时会弹出确认对话框", async () => {
     const user = userEvent.setup();
     render(<App />);

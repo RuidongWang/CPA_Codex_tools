@@ -125,7 +125,7 @@ export function PriorityBatchPanel(props: PriorityBatchPanelProps) {
               })}
             </div>
             <div className="settings-section__hint">
-              <span>只会改动勾选分组，未勾选分组保持现有远端值或本地草稿值。</span>
+              <span>按当前账号列表顺序在分组内从高到低生成，只会改动勾选分组。</span>
             </div>
           </section>
         </div>

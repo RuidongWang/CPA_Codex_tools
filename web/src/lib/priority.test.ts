@@ -72,16 +72,9 @@ describe("buildPriorityPlanPreview", () => {
 });
 
 describe("buildAutoPriorityDrafts", () => {
-  it("会把即将刷新额度的账号分到更高的优先级", () => {
+  it("会按传入账号列表顺序在分组内生成降序优先级", () => {
     const draft = buildAutoPriorityDrafts(
       [
-        makeAccount({
-          auth_index: "idx-team-a",
-          name: "codex-team-a.json",
-          email: "team-a@example.com",
-          plan_type: "team",
-          windows: [{ id: "code-5h", label: "5h", used_percent: 50, remaining_percent: 50, reset_at: "2026-04-29T12:00:00Z", reset_label: "04-29 12:00", exhausted: false }],
-        }),
         makeAccount({
           auth_index: "idx-team-b",
           name: "codex-team-b.json",
@@ -89,11 +82,18 @@ describe("buildAutoPriorityDrafts", () => {
           plan_type: "team",
           windows: [{ id: "code-5h", label: "5h", used_percent: 50, remaining_percent: 50, reset_at: "2026-04-29T15:00:00Z", reset_label: "04-29 15:00", exhausted: false }],
         }),
+        makeAccount({
+          auth_index: "idx-team-a",
+          name: "codex-team-a.json",
+          email: "team-a@example.com",
+          plan_type: "team",
+          windows: [{ id: "code-5h", label: "5h", used_percent: 50, remaining_percent: 50, reset_at: "2026-04-29T12:00:00Z", reset_label: "04-29 12:00", exhausted: false }],
+        }),
       ],
       ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
     );
 
-    expect(draft["idx-team-a"]).toBeGreaterThan(draft["idx-team-b"]);
+    expect(draft["idx-team-b"]).toBeGreaterThan(draft["idx-team-a"]);
   });
 
   it("只会为勾选分组生成本地优先级草稿", () => {

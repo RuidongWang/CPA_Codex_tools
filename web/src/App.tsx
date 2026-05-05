@@ -345,7 +345,7 @@ export default function App() {
     : allItems;
   const planCounts = buildPlanCounts(allItems);
   const overviewStats = buildOverviewStats(visibleItems);
-  const priorityCounts = buildPriorityPlanCounts(allItems);
+  const priorityCounts = buildPriorityPlanCounts(visibleItems);
   const isBusy = busyMode !== "idle";
   const readyToQuery = hasManagementConfig(config);
   const selectedCount = selectedAuthIndexes.length;
@@ -922,14 +922,16 @@ export default function App() {
       ...config,
       priorityPlanOrder: settings.priorityPlanOrder,
     };
+    const prioritySourceItems = visibleItems;
+    const sourceAuthIndexSet = new Set(prioritySourceItems.map((item) => item.auth_index));
     const selectedGroupSet = new Set(settings.selectedGroups);
-    const generatedDrafts = buildAutoPriorityDrafts(allItems, settings.priorityPlanOrder, settings.selectedGroups);
+    const generatedDrafts = buildAutoPriorityDrafts(prioritySourceItems, settings.priorityPlanOrder, settings.selectedGroups);
 
-    // 只重算勾选分组，未勾选分组保留本地草稿，避免批量动作覆盖用户还没同步的手工调整。
+    // 只重算当前列表里的勾选分组，未勾选分组和当前筛选外账号都保留已有本地草稿。
     const nextDrafts: Record<string, number> = {};
     for (const item of allItems) {
       const groupKey = normalizePriorityPlanKey(item.plan_type);
-      if (!selectedGroupSet.has(groupKey)) {
+      if (!sourceAuthIndexSet.has(item.auth_index) || !selectedGroupSet.has(groupKey)) {
         const existingDraft = priorityDrafts[item.auth_index];
         if (typeof existingDraft === "number") {
           nextDrafts[item.auth_index] = existingDraft;

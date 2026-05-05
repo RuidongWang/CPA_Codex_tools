@@ -128,54 +128,6 @@ export function buildPriorityPlanPreview(
   });
 }
 
-function readEarliestResetTimestamp(item: AccountItem): number | null {
-  const timestamps = item.windows
-    .map((window) => Date.parse(window.reset_at ?? ""))
-    .filter((value) => Number.isFinite(value));
-  if (!timestamps.length) {
-    return null;
-  }
-  return Math.min(...timestamps);
-}
-
-function readWorstRemaining(item: AccountItem): number | null {
-  const remaining = item.windows
-    .map((window) => window.remaining_percent)
-    .filter((value): value is number => typeof value === "number");
-  if (!remaining.length) {
-    return null;
-  }
-  return Math.min(...remaining);
-}
-
-function compareAutoPriorityOrder(left: AccountItem, right: AccountItem): number {
-  const leftReset = readEarliestResetTimestamp(left);
-  const rightReset = readEarliestResetTimestamp(right);
-  if (leftReset === null && rightReset !== null) {
-    return 1;
-  }
-  if (leftReset !== null && rightReset === null) {
-    return -1;
-  }
-  if (leftReset !== null && rightReset !== null && leftReset !== rightReset) {
-    return leftReset - rightReset;
-  }
-
-  const leftRemaining = readWorstRemaining(left);
-  const rightRemaining = readWorstRemaining(right);
-  if (leftRemaining === null && rightRemaining !== null) {
-    return 1;
-  }
-  if (leftRemaining !== null && rightRemaining === null) {
-    return -1;
-  }
-  if (leftRemaining !== null && rightRemaining !== null && leftRemaining !== rightRemaining) {
-    return leftRemaining - rightRemaining;
-  }
-
-  return left.email.localeCompare(right.email, "zh-CN");
-}
-
 export function buildAutoPriorityDrafts(
   items: AccountItem[],
   order: PriorityPlanKey[],
@@ -191,9 +143,8 @@ export function buildAutoPriorityDrafts(
     if (maxPriority === null || !selectedGroupSet.has(range.key)) {
       continue;
     }
-    const groupItems = items
-      .filter((item) => normalizePriorityPlanKey(item.plan_type) === range.key)
-      .sort(compareAutoPriorityOrder);
+    // 分组内直接沿用调用方传入的账号列表顺序，再从高到低分配优先级。
+    const groupItems = items.filter((item) => normalizePriorityPlanKey(item.plan_type) === range.key);
     groupItems.forEach((item, index) => {
       draft[item.auth_index] = maxPriority - index;
     });
