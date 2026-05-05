@@ -4,10 +4,11 @@ const REPOSITORY_URL = "https://github.com/RuidongWang/CPA_Codex_tools";
 
 interface WindowChromeProps {
   onOpenSettings: () => void;
+  onLogout: () => void;
 }
 
-// Web-only 顶栏只保留产品标题、仓库链接和设置入口。
-export function WindowChrome({ onOpenSettings }: WindowChromeProps) {
+// Web-only 顶栏保留产品标题、仓库链接、退出和设置入口。
+export function WindowChrome({ onOpenSettings, onLogout }: WindowChromeProps) {
   return (
     <div className="window-chrome">
       <div className="window-chrome__drag-region" data-testid="window-brand-region">
@@ -34,6 +35,14 @@ export function WindowChrome({ onOpenSettings }: WindowChromeProps) {
         github.com/RuidongWang/CPA_Codex_tools
       </a>
       <div className="window-chrome__actions">
+        <button
+          type="button"
+          className="window-chrome__button window-chrome__button--danger"
+          aria-label="退出登录"
+          onClick={onLogout}
+        >
+          <span className="material-symbols-outlined">logout</span>
+        </button>
         <button type="button" className="window-chrome__button" aria-label="打开设置" onClick={onOpenSettings}>
           <span className="material-symbols-outlined">settings</span>
         </button>

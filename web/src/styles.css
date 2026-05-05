@@ -81,6 +81,189 @@ input {
   white-space: nowrap;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(420px, 1fr) minmax(480px, 1fr);
+  background: #071019;
+  overflow: hidden;
+}
+
+.login-brand-panel {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 48px;
+  background:
+    linear-gradient(180deg, rgba(5, 10, 16, 0.96), rgba(1, 5, 9, 0.98)),
+    #05080d;
+  border-right: 1px solid rgba(134, 168, 205, 0.14);
+}
+
+.login-brand-copy {
+  width: 100%;
+  display: grid;
+  justify-items: end;
+  gap: 0;
+}
+
+.login-brand-copy span {
+  color: rgba(243, 247, 251, 0.92);
+  font-size: clamp(80px, 10vw, 180px);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: 0;
+}
+
+.login-brand-copy span:nth-child(2) {
+  color: rgba(114, 194, 255, 0.72);
+}
+
+.login-brand-copy span:nth-child(3) {
+  color: rgba(85, 214, 180, 0.62);
+}
+
+.login-form-panel {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  background:
+    linear-gradient(180deg, rgba(16, 25, 37, 0.98), rgba(12, 20, 31, 0.98)),
+    var(--surface);
+}
+
+.login-card {
+  width: min(100%, 440px);
+  display: grid;
+  gap: 18px;
+  padding: 30px;
+  border: 1px solid var(--outline);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(22, 33, 47, 0.98), rgba(14, 23, 35, 0.98)),
+    var(--surface-2);
+  box-shadow: var(--shadow-lg);
+}
+
+.login-card__mark {
+  width: 56px;
+  height: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(114, 194, 255, 0.28);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(114, 194, 255, 0.22), rgba(85, 214, 180, 0.16));
+  color: var(--accent-strong);
+}
+
+.login-card__mark .material-symbols-outlined {
+  font-size: 30px;
+}
+
+.login-card__header {
+  display: grid;
+  gap: 8px;
+}
+
+.login-card__header h1 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 26px;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.login-field {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.login-field__control {
+  width: 100%;
+  flex: none;
+}
+
+.login-field__icon-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.login-field__icon-button:hover,
+.login-field__icon-button:focus-visible {
+  background: rgba(114, 194, 255, 0.1);
+  color: var(--text-primary);
+  outline: none;
+}
+
+.login-field__icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.login-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.login-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.login-submit {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.login-submit__spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  border-top-color: var(--accent-strong);
+  border-radius: 999px;
+  animation: login-spin 800ms linear infinite;
+}
+
+.login-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 126, 143, 0.34);
+  border-radius: 12px;
+  background: rgba(255, 126, 143, 0.1);
+  color: #ffd5da;
+  font-weight: 600;
+}
+
+@keyframes login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* 主壳层保留 Stitch 的仪表盘骨架，但把尺寸收紧到中文管理界面更舒服的密度。 */
 .stitch-shell {
   height: 100vh;

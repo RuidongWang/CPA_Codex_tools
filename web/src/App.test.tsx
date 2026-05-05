@@ -339,7 +339,7 @@ describe("App", () => {
     expect(mockApi.loadRuntimeConfig).not.toHaveBeenCalled();
   });
 
-  it("CPA 地址留空时不会再自动加载账号，而是等待补齐管理配置", async () => {
+  it("CPA 地址留空时不会再自动加载账号，而是展示登录页", async () => {
     mockApi.loadRuntimeConfig.mockResolvedValueOnce({
       cpaBaseUrl: "",
       managementKey: "demo-key",
@@ -349,9 +349,43 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("等待输入管理配置")).toBeInTheDocument();
+    expect(await screen.findByRole("form", { name: "登录表单" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "CPA 管理地址" })).toHaveValue("");
+    expect(screen.getByPlaceholderText("输入管理密钥")).toHaveValue("demo-key");
     expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
     expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
+  });
+
+  it("登录页填写地址和管理密钥后会验证并进入控制台", async () => {
+    const user = userEvent.setup();
+    mockApi.loadRuntimeConfig.mockResolvedValueOnce({
+      cpaBaseUrl: "",
+      managementKey: "",
+      queryConcurrency: 6,
+      priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+    });
+
+    render(<App />);
+
+    await user.type(await screen.findByRole("textbox", { name: "CPA 管理地址" }), "https://cpa.example/");
+    await user.type(screen.getByPlaceholderText("输入管理密钥"), "demo-key");
+    await user.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() => {
+      expect(mockApi.fetchAccountList).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cpaBaseUrl: "https://cpa.example/",
+          managementKey: "demo-key",
+        }),
+      );
+    });
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cpaBaseUrl: "https://cpa.example/",
+        managementKey: "demo-key",
+      }),
+    );
   });
 
   it("初始化失败时会展示 Rust 返回的具体错误", async () => {
@@ -769,8 +803,7 @@ describe("App", () => {
     expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("https://cpa.example/")).toHaveValue("");
     expect(screen.getByPlaceholderText("输入管理密钥")).toHaveValue("");
-    await user.click(screen.getByRole("button", { name: "额度页面" }));
-    expect(screen.getByText("本地缓存已清空，等待输入管理配置")).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "登录表单" })).toBeInTheDocument();
   });
 
   it("会拦截页面右键菜单", async () => {
@@ -783,7 +816,7 @@ describe("App", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("缺少管理密钥时会恢复上次缓存的额度结果", async () => {
+  it("缺少管理密钥时会进入登录页且不展示缓存账号", async () => {
     mockApi.loadRuntimeConfig.mockResolvedValueOnce({
       cpaBaseUrl: "https://cpa.example/",
       managementKey: "",
@@ -794,8 +827,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("下次刷新 04-25 06:00")).toBeInTheDocument();
-    expect(screen.getAllByText("free@example.com").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("form", { name: "登录表单" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "CPA 管理地址" })).toHaveValue("https://cpa.example/");
+    expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
     expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
   });
 

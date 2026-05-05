@@ -3,6 +3,7 @@ import { AccountTable } from "./components/AccountTable";
 import { ConnectionConfigPanel } from "./components/ConnectionConfigPanel";
 import { OverviewCards } from "./components/OverviewCards";
 import { KeeperPanel } from "./components/KeeperPanel";
+import { LoginPage } from "./components/LoginPage";
 import { PlanFilterBar } from "./components/PlanFilterBar";
 import { PriorityBatchPanel } from "./components/PriorityBatchPanel";
 import { ProgressPanel } from "./components/ProgressPanel";
@@ -112,6 +113,7 @@ interface ProgressState {
 }
 
 type BusyMode = "idle" | "bootstrap" | "list" | "query-one" | "download" | "sync" | "keeper";
+type SessionState = "checking" | "login" | "authenticated";
 
 function areSameProgressTask(left: ProgressState, right: ProgressState): boolean {
   return left.title === right.title && left.total === right.total;
@@ -139,6 +141,7 @@ function compactProgressQueue(queue: ProgressState[]): ProgressState[] {
 export default function App() {
   const readmeDemoMode = typeof window !== "undefined" && isReadmeDemoMode(window.location.search);
   const [config, setConfig] = useState<RuntimeConfig>(EMPTY_CONFIG);
+  const [sessionState, setSessionState] = useState<SessionState>(readmeDemoMode ? "authenticated" : "checking");
   const [payload, setPayload] = useState<PayloadEnvelope | null>(null);
   const [selectedPlan, setSelectedPlan] = useState("all");
   const [activePage, setActivePage] = useState<SidebarPage>("quota");
@@ -148,6 +151,7 @@ export default function App() {
   const [selectedAuthIndexesByPlan, setSelectedAuthIndexesByPlan] = useState<Record<string, string[]>>({});
   const [loadingLabel, setLoadingLabel] = useState("初始化中");
   const [errorMessage, setErrorMessage] = useState("");
+  const [loginErrorMessage, setLoginErrorMessage] = useState("");
   const [busyMode, setBusyMode] = useState<BusyMode>("bootstrap");
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [pendingProgressCount, setPendingProgressCount] = useState(0);
@@ -235,6 +239,7 @@ export default function App() {
         }
         // README 演示模式直接加载虚构数据，避免截图时碰到真实账号或真实 CPA。
         setConfig(README_DEMO_CONFIG);
+        setSessionState("authenticated");
         startTransition(() => {
           setPayload(README_DEMO_PAYLOAD);
           setSelectedAuthIndex("");
@@ -263,8 +268,10 @@ export default function App() {
           setLoadingLabel("已恢复上次查询缓存");
         }
         if (!readyToQuery) {
-          // 账号缓存允许只读浏览，但真正发请求前必须把地址和管理密钥补齐。
-          setLoadingLabel(cachedPayload?.items.length ? "已恢复缓存，等待输入管理配置" : "等待输入管理配置");
+          // 未登录时只展示登录页；缓存只留在内存中，避免未认证状态下露出账号列表。
+          setLoginErrorMessage("");
+          setSessionState("login");
+          setLoadingLabel(cachedPayload?.items.length ? "已恢复缓存，等待登录" : "等待登录");
           setBusyMode("idle");
           return;
         }
@@ -282,6 +289,8 @@ export default function App() {
         });
         await persistPayloadCache(initialPayload);
         clearProgress();
+        setLoginErrorMessage("");
+        setSessionState("authenticated");
         setBusyMode("idle");
         setLoadingLabel("账号列表已加载");
       } catch (error) {
@@ -299,7 +308,10 @@ export default function App() {
         } else {
           setLoadingLabel("初始化失败");
         }
-        setErrorMessage(resolveErrorMessage(error, "初始化失败"));
+        const message = resolveErrorMessage(error, "初始化失败");
+        setErrorMessage(message);
+        setLoginErrorMessage(`自动登录失败：${message}`);
+        setSessionState("login");
         setBusyMode("idle");
       }
     }
@@ -373,6 +385,68 @@ export default function App() {
       ...current,
       [field]: value,
     }));
+  }
+
+  async function handleLoginSubmit(rememberLogin: boolean) {
+    const nextConfig: RuntimeConfig = {
+      ...effectiveConfig,
+      cpaBaseUrl: effectiveConfig.cpaBaseUrl.trim(),
+      managementKey: effectiveConfig.managementKey.trim(),
+    };
+    if (!nextConfig.cpaBaseUrl || !nextConfig.managementKey) {
+      setLoginErrorMessage("请填写 CPA 管理地址和管理密钥");
+      return;
+    }
+
+    try {
+      setLoginErrorMessage("");
+      setErrorMessage("");
+      clearProgress();
+      setBusyMode("bootstrap");
+      setLoadingLabel("正在登录");
+      await waitForNextPaint();
+      const nextPayload = await fetchAccountList(nextConfig);
+      startTransition(() => {
+        setConfig(nextConfig);
+        setPayload(nextPayload);
+        setSelectedAuthIndex("");
+        setSelectedAuthIndexesByPlan({});
+      });
+      await persistPayloadCache(nextPayload);
+      try {
+        await saveRuntimeConfig(rememberLogin ? nextConfig : { ...nextConfig, managementKey: "" });
+      } catch (error) {
+        setErrorMessage(`登录成功，配置保存失败。${resolveErrorMessage(error, "请稍后重试")}`);
+      }
+      setSessionState("authenticated");
+      setLoadingLabel("登录成功，账号列表已加载");
+    } catch (error) {
+      const message = resolveErrorMessage(error, "登录失败，请检查地址和管理密钥");
+      setLoginErrorMessage(message);
+      setLoadingLabel("登录失败");
+    } finally {
+      setBusyMode("idle");
+    }
+  }
+
+  async function handleLogout() {
+    if (isBusy) {
+      return;
+    }
+    const nextConfig = {
+      ...effectiveConfig,
+      managementKey: "",
+    };
+    try {
+      await saveRuntimeConfig(nextConfig);
+    } catch {
+      // 退出登录时清理本地密钥失败不影响界面先回到登录页。
+    }
+    resetLocalViewState(nextConfig);
+    setLoginErrorMessage("");
+    setErrorMessage("");
+    setSessionState("login");
+    setLoadingLabel("已退出登录");
   }
 
   function updateSelectionsForPlan(planKey: string, updater: (current: string[]) => string[]) {
@@ -900,8 +974,10 @@ export default function App() {
     try {
       await clearLocalCache();
       resetLocalViewState();
+      setSessionState("login");
+      setLoginErrorMessage("");
       setErrorMessage("");
-      setLoadingLabel("本地缓存已清空，等待输入管理配置");
+      setLoadingLabel("本地缓存已清空，请重新登录");
       setSettingsOpen(false);
     } catch (error) {
       setErrorMessage(resolveErrorMessage(error, "清空本地缓存失败"));
@@ -1174,6 +1250,19 @@ export default function App() {
     await runPrioritySync();
   }
 
+  if (!readmeDemoMode && sessionState !== "authenticated") {
+    return (
+      <LoginPage
+        config={effectiveConfig}
+        busy={busyMode === "bootstrap"}
+        checking={sessionState === "checking"}
+        errorMessage={loginErrorMessage}
+        onConfigChange={patchConfig}
+        onSubmit={handleLoginSubmit}
+      />
+    );
+  }
+
   return (
     <div className="stitch-shell">
       <SidebarFilters
@@ -1182,7 +1271,7 @@ export default function App() {
         accountCount={allItems.length}
       />
       <main className="stitch-main">
-        <WindowChrome onOpenSettings={() => setSettingsOpen(true)} />
+        <WindowChrome onOpenSettings={() => setSettingsOpen(true)} onLogout={handleLogout} />
         {activePage === "quota" ? (
           <>
             <Toolbar
