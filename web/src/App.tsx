@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
 import { AccountTable } from "./components/AccountTable";
+import { CodexOAuthPanel } from "./components/CodexOAuthPanel";
 import { ConnectionConfigPanel } from "./components/ConnectionConfigPanel";
 import { OverviewCards } from "./components/OverviewCards";
 import { KeeperPanel } from "./components/KeeperPanel";
@@ -18,15 +19,20 @@ import {
   DEFAULT_QUERY_CONCURRENCY,
   downloadSelectedAccounts,
   fetchAccountList,
+  fetchHotmailVerificationCode,
   loadPayloadCache,
   loadRuntimeConfig,
+  pollCodexOAuthStatus,
   queryCachedAccounts,
   runKeeperDirectAction,
   runKeeperMaintenance,
   savePayloadCache,
   saveRuntimeConfig,
+  startCodexOAuth,
+  submitCodexOAuthCallback,
   syncAccountPriorities,
 } from "./lib/api";
+import { DEFAULT_OAUTH_SETTINGS } from "./lib/oauth";
 import {
   applyPriorityDrafts,
   buildAutoPriorityDrafts,
@@ -36,7 +42,7 @@ import {
 } from "./lib/priority";
 import { buildOverviewStats, buildPlanCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
 import { isReadmeDemoMode, README_DEMO_CONFIG, README_DEMO_PAYLOAD } from "./lib/readme-demo";
-import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, PayloadEnvelope, RuntimeConfig } from "./types";
+import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, OAuthSettings, PayloadEnvelope, RuntimeConfig } from "./types";
 
 const PROGRESS_HOLD_MS = 2000;
 const PROGRESS_FADE_MS = 240;
@@ -50,11 +56,51 @@ const EMPTY_CONFIG: RuntimeConfig = {
   queryConcurrency: DEFAULT_QUERY_CONCURRENCY,
   keeperSettings: DEFAULT_KEEPER_SETTINGS,
   priorityPlanOrder: PRIORITY_PLAN_KEYS,
+  priorityPlanRanges: {},
+  oauthSettings: DEFAULT_OAUTH_SETTINGS,
 };
 
 function hasManagementConfig(config: RuntimeConfig): boolean {
   // 开源版不再内置默认地址，只有地址和管理密钥都齐全时才允许发请求。
   return Boolean(config.cpaBaseUrl.trim() && config.managementKey.trim());
+}
+
+function normalizeAccountKey(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findOAuthQuotaCheckAccount(items: AccountItem[], account: AccountItem): AccountItem {
+  const emailKey = normalizeAccountKey(account.email);
+  if (emailKey) {
+    const sameEmailItems = items.filter((item) => normalizeAccountKey(item.email) === emailKey);
+    const refreshedSameEmail = sameEmailItems.find((item) => item.auth_index !== account.auth_index && item.status !== "error");
+    const normalSameEmail = sameEmailItems.find((item) => item.status !== "error");
+    if (refreshedSameEmail || normalSameEmail || sameEmailItems[0]) {
+      return refreshedSameEmail ?? normalSameEmail ?? sameEmailItems[0];
+    }
+  }
+  return items.find((item) => item.auth_index === account.auth_index) ??
+    items.find((item) => item.name === account.name) ??
+    account;
+}
+
+function mergeKeeperRefreshFailureAuthIndexes(
+  current: string[],
+  result: KeeperRunResult,
+  mode: "direct-refresh" | "maintenance",
+): string[] {
+  const attemptedAuthIndexes = new Set(
+    result.items
+      .filter((item) => mode === "direct-refresh" || item.refresh_candidate)
+      .map((item) => item.auth_index)
+      .filter(Boolean),
+  );
+  const failedAuthIndexes = result.items
+    .filter((item) => attemptedAuthIndexes.has(item.auth_index) && item.outcome === "error" && !item.refreshed)
+    .map((item) => item.auth_index)
+    .filter(Boolean);
+  const retained = current.filter((authIndex) => !attemptedAuthIndexes.has(authIndex));
+  return Array.from(new Set([...retained, ...failedAuthIndexes]));
 }
 
 function resolveErrorMessage(error: unknown, fallback: string): string {
@@ -147,6 +193,7 @@ export default function App() {
   const [activePage, setActivePage] = useState<SidebarPage>("quota");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [search, setSearch] = useState("");
+  const [keeperSearch, setKeeperSearch] = useState("");
   const [selectedAuthIndex, setSelectedAuthIndex] = useState("");
   const [selectedAuthIndexesByPlan, setSelectedAuthIndexesByPlan] = useState<Record<string, string[]>>({});
   const [loadingLabel, setLoadingLabel] = useState("初始化中");
@@ -164,11 +211,13 @@ export default function App() {
   const [priorityBatchSaving, setPriorityBatchSaving] = useState(false);
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [keeperResult, setKeeperResult] = useState<KeeperRunResult | null>(null);
+  const [keeperRefreshFailureAuthIndexes, setKeeperRefreshFailureAuthIndexes] = useState<string[]>([]);
   const [sortState, setSortState] = useState<SortState>({ key: "default", direction: "none" });
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, number>>({});
   const [lastDraftChangeAt, setLastDraftChangeAt] = useState<number | null>(null);
   const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
   const deferredSearch = useDeferredValue(search);
+  const deferredKeeperSearch = useDeferredValue(keeperSearch);
   const toolbarRef = useRef<HTMLElement | null>(null);
   const progressRef = useRef<ProgressState | null>(null);
   const progressQueueRef = useRef<ProgressState[]>([]);
@@ -338,6 +387,8 @@ export default function App() {
   const effectiveConfig: RuntimeConfig = {
     ...config,
     keeperSettings: config.keeperSettings ?? DEFAULT_KEEPER_SETTINGS,
+    priorityPlanRanges: config.priorityPlanRanges ?? {},
+    oauthSettings: config.oauthSettings ?? DEFAULT_OAUTH_SETTINGS,
   };
   const draftedItems = applyPriorityDrafts(allItems, priorityDrafts);
   const filteredItems = filterItems(draftedItems, {
@@ -346,7 +397,11 @@ export default function App() {
     query: deferredSearch,
   });
   const visibleItems = sortItems(filteredItems, sortState);
-  const keeperItems = sortItems(draftedItems, sortState);
+  const keeperItems = filterItems(sortItems(draftedItems, sortState), {
+    plan: "all",
+    status: "all",
+    query: deferredKeeperSearch,
+  });
   const selectedAuthIndexes = selectedAuthIndexesByPlan[selectedPlan] ?? [];
   const keeperSelectedAuthIndexes = selectedAuthIndexesByPlan.all ?? [];
   const keeperSelectedItems = keeperItems.filter((item) => keeperSelectedAuthIndexes.includes(item.auth_index));
@@ -547,6 +602,7 @@ export default function App() {
     setLastDraftChangeAt(null);
     setLastBackupAt(null);
     setKeeperResult(null);
+    setKeeperRefreshFailureAuthIndexes([]);
     setPriorityBatchOpen(false);
     setSyncConfirmOpen(false);
   }
@@ -706,6 +762,82 @@ export default function App() {
     }
   }
 
+  async function handleOAuthLoginQuotaCheck(account: AccountItem) {
+    if (!readyToQuery) {
+      setLoadingLabel("请先填写 CPA 地址和管理密钥");
+      return;
+    }
+    const startedAt = performance.now();
+    const title = "OAuth 登录额度检测";
+    try {
+      setErrorMessage("");
+      clearProgress();
+      setBusyMode("query-one");
+      setLoadingLabel("OAuth 登录成功，正在检测额度");
+      showProgress({
+        title,
+        completed: 0,
+        total: 1,
+        currentLabel: account.email || account.name,
+        elapsedLabel: "",
+      });
+      await waitForNextPaint();
+      let basePayload = payload;
+      let targetAccount = account;
+      try {
+        const refreshedPayload = await fetchAccountList(effectiveConfig);
+        basePayload = refreshedPayload;
+        targetAccount = findOAuthQuotaCheckAccount(refreshedPayload.items, account);
+      } catch {
+        basePayload = payload;
+        targetAccount = account;
+      }
+      const nextPayload = await queryCachedAccounts(effectiveConfig, [targetAccount], (event) => {
+        showProgress({
+          title,
+          completed: event.completed,
+          total: event.total,
+          currentLabel: event.currentLabel || targetAccount.email || targetAccount.name,
+          elapsedLabel: "",
+        });
+      });
+      const snapshot = mergePayload(basePayload, nextPayload);
+      const checkedItem = nextPayload.items.find((item) => item.auth_index === targetAccount.auth_index);
+      const recovered = Boolean(checkedItem && checkedItem.status !== "error");
+      startTransition(() => {
+        setPayload(snapshot);
+      });
+      if (recovered) {
+        setKeeperRefreshFailureAuthIndexes((current) =>
+          current.filter((authIndex) => authIndex !== account.auth_index && authIndex !== targetAccount.auth_index),
+        );
+      }
+      await persistPayloadCache(snapshot);
+      showProgress({
+        title,
+        completed: 1,
+        total: 1,
+        currentLabel: recovered ? "额度检测正常" : "额度检测异常",
+        elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+      });
+      setLoadingLabel(recovered ? "OAuth 登录成功，额度检测正常" : "OAuth 登录成功，额度检测仍异常");
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "OAuth 登录成功，额度检测失败"));
+      setLoadingLabel("OAuth 登录成功，额度检测失败");
+      patchVisibleProgress((current) =>
+        current
+          ? {
+              ...current,
+              elapsedLabel: formatElapsedLabel(performance.now() - startedAt),
+            }
+          : null,
+      );
+      throw error;
+    } finally {
+      setBusyMode("idle");
+    }
+  }
+
   async function handleQuerySelected() {
     if (!readyToQuery) {
       setLoadingLabel("请先填写 CPA 地址和管理密钥");
@@ -763,6 +895,22 @@ export default function App() {
       queryConcurrency: effectiveConfig.queryConcurrency,
       keeperSettings,
     });
+  }
+
+  async function handleSaveOAuthSettings(oauthSettings: OAuthSettings) {
+    const nextConfig = {
+      ...effectiveConfig,
+      oauthSettings,
+    };
+    setConfig(nextConfig);
+    try {
+      await saveRuntimeConfig(nextConfig);
+      setErrorMessage("");
+      setLoadingLabel("OAuth 配置已保存");
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "保存 OAuth 配置失败"));
+      setLoadingLabel("OAuth 配置保存失败");
+    }
   }
 
   function handlePlanChange(plan: string) {
@@ -855,6 +1003,7 @@ export default function App() {
       });
       setKeeperResult(result);
       if (!dryRun) {
+        setKeeperRefreshFailureAuthIndexes((current) => mergeKeeperRefreshFailureAuthIndexes(current, result, "maintenance"));
         try {
           const refreshedPayload = await fetchAccountList(effectiveConfig);
           startTransition(() => {
@@ -931,6 +1080,9 @@ export default function App() {
         });
       });
       setKeeperResult(result);
+      if (action === "refresh") {
+        setKeeperRefreshFailureAuthIndexes((current) => mergeKeeperRefreshFailureAuthIndexes(current, result, "direct-refresh"));
+      }
       try {
         const refreshedPayload = await fetchAccountList(effectiveConfig);
         startTransition(() => {
@@ -990,6 +1142,7 @@ export default function App() {
   async function handleApplyPriorityPlan(settings: {
     selectedGroups: RuntimeConfig["priorityPlanOrder"];
     priorityPlanOrder: RuntimeConfig["priorityPlanOrder"];
+    priorityPlanRanges: RuntimeConfig["priorityPlanRanges"];
   }) {
     if (!allItems.length || settings.selectedGroups.length === 0) {
       return;
@@ -997,11 +1150,17 @@ export default function App() {
     const nextConfig = {
       ...config,
       priorityPlanOrder: settings.priorityPlanOrder,
+      priorityPlanRanges: settings.priorityPlanRanges,
     };
     const prioritySourceItems = visibleItems;
     const sourceAuthIndexSet = new Set(prioritySourceItems.map((item) => item.auth_index));
     const selectedGroupSet = new Set(settings.selectedGroups);
-    const generatedDrafts = buildAutoPriorityDrafts(prioritySourceItems, settings.priorityPlanOrder, settings.selectedGroups);
+    const generatedDrafts = buildAutoPriorityDrafts(
+      prioritySourceItems,
+      settings.priorityPlanOrder,
+      settings.selectedGroups,
+      settings.priorityPlanRanges,
+    );
 
     // 只重算当前列表里的勾选分组，未勾选分组和当前筛选外账号都保留已有本地草稿。
     const nextDrafts: Record<string, number> = {};
@@ -1365,6 +1524,17 @@ export default function App() {
                 <span className="panel-heading__eyebrow">选中账号</span>
                 <strong>{keeperSelectedCount}</strong>
               </div>
+              <label className="command-field command-field--search keeper-selected-actions__search">
+                <span className="material-symbols-outlined" aria-hidden="true">search</span>
+                <input
+                  className="command-field__input"
+                  aria-label="检索 Keeper 账号"
+                  value={keeperSearch}
+                  disabled={isBusy}
+                  onChange={(event) => setKeeperSearch(event.target.value)}
+                  placeholder="按邮箱 / 名称检索"
+                />
+              </label>
               <div className="keeper-selected-actions__buttons">
                 <button
                   type="button"
@@ -1407,6 +1577,27 @@ export default function App() {
             />
           </section>
         ) : null}
+        {activePage === "oauth" ? (
+          <CodexOAuthPanel
+            items={allItems}
+            settings={effectiveConfig.oauthSettings}
+            ready={readyToQuery}
+            onSettingsChange={handleSaveOAuthSettings}
+            onStartOAuth={() => startCodexOAuth(effectiveConfig)}
+            onSubmitOAuthCallback={(state, redirectUrl) => submitCodexOAuthCallback(effectiveConfig, state, redirectUrl)}
+            onPollOAuthStatus={(state) => pollCodexOAuthStatus(effectiveConfig, state)}
+            onFetchHotmailCode={(account, options) =>
+              fetchHotmailVerificationCode({
+                config: effectiveConfig,
+                helperUrl: effectiveConfig.oauthSettings.hotmailHelperUrl,
+                account,
+                ...options,
+              })
+            }
+            onCheckLoginQuota={handleOAuthLoginQuotaCheck}
+            keeperRefreshFailureAuthIndexes={keeperRefreshFailureAuthIndexes}
+          />
+        ) : null}
       </main>
       <SettingsPanel
         open={settingsOpen}
@@ -1422,6 +1613,7 @@ export default function App() {
         open={priorityBatchOpen}
         priorityCounts={priorityCounts}
         priorityPlanOrder={effectiveConfig.priorityPlanOrder}
+        priorityPlanRanges={effectiveConfig.priorityPlanRanges}
         saving={priorityBatchSaving}
         onClose={() => setPriorityBatchOpen(false)}
         onSubmit={handleApplyPriorityPlan}

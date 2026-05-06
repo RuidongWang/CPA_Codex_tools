@@ -72,6 +72,99 @@ describe("buildPriorityPlanPreview", () => {
 });
 
 describe("buildAutoPriorityDrafts", () => {
+  it("按手动区间把账号分桶到固定优先级档位", () => {
+    const accounts = Array.from({ length: 200 }, (_, index) =>
+      makeAccount({
+        auth_index: `idx-free-${index + 1}`,
+        name: `codex-free-${index + 1}.json`,
+        email: `free-${index + 1}@example.com`,
+        plan_type: "free",
+      }),
+    );
+
+    const draft = buildAutoPriorityDrafts(
+      accounts,
+      ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+      ["free"],
+      { free: { minPriority: 1, maxPriority: 20 } },
+    );
+
+    expect(draft["idx-free-1"]).toBe(20);
+    expect(draft["idx-free-10"]).toBe(20);
+    expect(draft["idx-free-11"]).toBe(19);
+    expect(draft["idx-free-190"]).toBe(2);
+    expect(draft["idx-free-191"]).toBe(1);
+    expect(draft["idx-free-200"]).toBe(1);
+  });
+
+  it("手动区间分桶有余数时会把余数归到最后一个最低优先级档位", () => {
+    const accounts = Array.from({ length: 205 }, (_, index) =>
+      makeAccount({
+        auth_index: `idx-free-${index + 1}`,
+        name: `codex-free-${index + 1}.json`,
+        email: `free-${index + 1}@example.com`,
+        plan_type: "free",
+      }),
+    );
+
+    const draft = buildAutoPriorityDrafts(
+      accounts,
+      ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+      ["free"],
+      { free: { minPriority: 1, maxPriority: 20 } },
+    );
+
+    expect(draft["idx-free-200"]).toBe(1);
+    expect(draft["idx-free-201"]).toBe(1);
+    expect(draft["idx-free-205"]).toBe(1);
+  });
+
+  it("账号数小于手动区间档位数时会从最高优先级逐个递减", () => {
+    const accounts = Array.from({ length: 5 }, (_, index) =>
+      makeAccount({
+        auth_index: `idx-free-${index + 1}`,
+        name: `codex-free-${index + 1}.json`,
+        email: `free-${index + 1}@example.com`,
+        plan_type: "free",
+      }),
+    );
+
+    const draft = buildAutoPriorityDrafts(
+      accounts,
+      ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+      ["free"],
+      { free: { minPriority: 1, maxPriority: 20 } },
+    );
+
+    expect(draft).toMatchObject({
+      "idx-free-1": 20,
+      "idx-free-2": 19,
+      "idx-free-3": 18,
+      "idx-free-4": 17,
+      "idx-free-5": 16,
+    });
+  });
+
+  it("手动区间最小值和最大值相同时会把整组账号设置成同一个优先级", () => {
+    const accounts = Array.from({ length: 3 }, (_, index) =>
+      makeAccount({
+        auth_index: `idx-free-${index + 1}`,
+        name: `codex-free-${index + 1}.json`,
+        email: `free-${index + 1}@example.com`,
+        plan_type: "free",
+      }),
+    );
+
+    const draft = buildAutoPriorityDrafts(
+      accounts,
+      ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+      ["free"],
+      { free: { minPriority: 20, maxPriority: 20 } },
+    );
+
+    expect(Object.values(draft)).toEqual([20, 20, 20]);
+  });
+
   it("会按传入账号列表顺序在分组内生成降序优先级", () => {
     const draft = buildAutoPriorityDrafts(
       [

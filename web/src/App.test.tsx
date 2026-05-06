@@ -73,6 +73,10 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
     runKeeperDirectAction: vi.fn(),
     runKeeperMaintenance: vi.fn(),
     downloadSelectedAccounts: vi.fn(),
+    startCodexOAuth: vi.fn(),
+    submitCodexOAuthCallback: vi.fn(),
+    pollCodexOAuthStatus: vi.fn(),
+    fetchHotmailVerificationCode: vi.fn(),
     querySingleAccount: vi.fn(),
     syncAccountPriorities: vi.fn(),
   },
@@ -97,6 +101,10 @@ vi.mock("./lib/api", () => ({
   runKeeperDirectAction: mockApi.runKeeperDirectAction,
   runKeeperMaintenance: mockApi.runKeeperMaintenance,
   downloadSelectedAccounts: mockApi.downloadSelectedAccounts,
+  startCodexOAuth: mockApi.startCodexOAuth,
+  submitCodexOAuthCallback: mockApi.submitCodexOAuthCallback,
+  pollCodexOAuthStatus: mockApi.pollCodexOAuthStatus,
+  fetchHotmailVerificationCode: mockApi.fetchHotmailVerificationCode,
   querySingleAccount: mockApi.querySingleAccount,
   syncAccountPriorities: mockApi.syncAccountPriorities,
 }));
@@ -472,6 +480,172 @@ describe("App", () => {
     });
   });
 
+  it("侧栏可以打开 Codex OAuth登录页面并导入 Hotmail 账号", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Codex OAuth登录页面" }));
+
+    const oauthPage = screen.getByRole("region", { name: "Codex OAuth登录页面" });
+    expect(within(oauthPage).getByRole("heading", { name: "Codex OAuth登录" })).toBeInTheDocument();
+
+    await user.type(
+      within(oauthPage).getByLabelText("Hotmail 批量导入"),
+      "账号----密码----ID----Token\nalice@hotmail.com----pass----client-id----refresh-token",
+    );
+    await user.click(within(oauthPage).getByRole("button", { name: "导入 Hotmail 账号" }));
+
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({
+        oauthSettings: expect.objectContaining({
+          hotmailAccounts: [
+            expect.objectContaining({
+              email: "alice@hotmail.com",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+            }),
+          ],
+        }),
+      }));
+    });
+  });
+
+  it("Codex OAuth登录成功后会检测目标账号额度并恢复正常账号", async () => {
+    const user = userEvent.setup();
+    mockApi.fetchAccountList.mockResolvedValueOnce({
+      ...listPayload,
+      groups: {
+        by_plan: { free: 1, team: 2 },
+        by_status: { error: 1, unknown: 2 },
+      },
+      items: [
+        {
+          ...listPayload.items[0],
+          status: "error" as const,
+          error: "额度接口失败",
+          last_query_at: "2026-05-06T00:00:00+08:00",
+        },
+        listPayload.items[1],
+        listPayload.items[2],
+      ],
+    });
+    mockApi.startCodexOAuth.mockResolvedValue({
+      authUrl: "https://auth.openai.com/oauth?state=oauth-state",
+      state: "oauth-state",
+      raw: {},
+    });
+    mockApi.pollCodexOAuthStatus.mockResolvedValue({
+      state: "oauth-state",
+      status: "success",
+      email: "free@example.com",
+      message: "认证成功",
+      raw: {},
+    });
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Codex OAuth登录页面" }));
+
+    const oauthPage = screen.getByRole("region", { name: "Codex OAuth登录页面" });
+    expect(within(oauthPage).getByText("额度接口失败 · free")).toBeInTheDocument();
+
+    await user.click(within(oauthPage).getByRole("button", { name: "发起 OAuth登录" }));
+    expect(openSpy).toHaveBeenCalledWith("https://auth.openai.com/oauth?state=oauth-state", "_blank", "noopener,noreferrer");
+
+    await user.click(within(oauthPage).getByRole("button", { name: "检查登录状态" }));
+
+    await waitFor(() => {
+      expect(mockApi.queryCachedAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [expect.objectContaining({ auth_index: "idx-free", email: "free@example.com" })],
+        expect.any(Function),
+      );
+    });
+    expect(await within(oauthPage).findByText("暂无符合条件的失效账号。")).toBeInTheDocument();
+    expect(within(oauthPage).queryByText("额度接口失败 · free")).not.toBeInTheDocument();
+  });
+
+  it("Codex OAuth登录成功后会先刷新账号列表再检测最新账号额度", async () => {
+    const user = userEvent.setup();
+    const invalidPayload = makePayload({
+      items: [
+        makeItem({
+          email: "free@example.com",
+          auth_index: "idx-free-old",
+          name: "codex-free-old.json",
+          status: "error",
+          error: "缺少 chatgpt_account_id",
+          last_query_at: "2026-05-06T00:00:00+08:00",
+        }),
+      ],
+    });
+    const refreshedPayload = makePayload({
+      items: [
+        makeItem({
+          email: "free@example.com",
+          auth_index: "idx-free-new",
+          name: "codex-free-new.json",
+          status: "unknown",
+          error: "",
+          last_query_at: null,
+        }),
+      ],
+    });
+    mockApi.fetchAccountList
+      .mockResolvedValueOnce(invalidPayload)
+      .mockResolvedValueOnce(refreshedPayload);
+    mockApi.startCodexOAuth.mockResolvedValue({
+      authUrl: "https://auth.openai.com/oauth?state=oauth-state",
+      state: "oauth-state",
+      raw: {},
+    });
+    mockApi.pollCodexOAuthStatus.mockResolvedValue({
+      state: "oauth-state",
+      status: "success",
+      email: "free@example.com",
+      message: "认证成功",
+      raw: {},
+    });
+    mockApi.queryCachedAccounts.mockImplementationOnce(async (_config, items: typeof listPayload.items) =>
+      makePayload({
+        items: items.map((item) =>
+          makeItem({
+            ...item,
+            status: "healthy",
+            error: "",
+            last_query_at: "2026-05-06T00:05:00+08:00",
+          }),
+        ),
+        meta: { success: items.length, failed: 0 },
+      }),
+    );
+    vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Codex OAuth登录页面" }));
+    const oauthPage = screen.getByRole("region", { name: "Codex OAuth登录页面" });
+    expect(within(oauthPage).getByText("缺少 chatgpt_account_id · free")).toBeInTheDocument();
+
+    await user.click(within(oauthPage).getByRole("button", { name: "发起 OAuth登录" }));
+    await user.click(within(oauthPage).getByRole("button", { name: "检查登录状态" }));
+
+    await waitFor(() => {
+      expect(mockApi.fetchAccountList).toHaveBeenCalledTimes(2);
+      expect(mockApi.queryCachedAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [expect.objectContaining({ auth_index: "idx-free-new", name: "codex-free-new.json" })],
+        expect.any(Function),
+      );
+    });
+    expect(await within(oauthPage).findByText("暂无符合条件的失效账号。")).toBeInTheDocument();
+    expect(within(oauthPage).queryByText("缺少 chatgpt_account_id · free")).not.toBeInTheDocument();
+  });
+
   it("新版监控台展示操作台、账号列表和排障详情分区标题", async () => {
     render(<App />);
 
@@ -496,6 +670,21 @@ describe("App", () => {
     expect(within(keeperPage).getByText("账号列表")).toBeInTheDocument();
     expect(within(keeperPage).getByText("free@example.com")).toBeInTheDocument();
     expect(within(keeperPage).queryByText("等待 Keeper 运行结果")).not.toBeInTheDocument();
+  });
+
+  it("Keeper 页选中操作栏可以按邮箱检索账号列表", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    await user.type(within(keeperPage).getByLabelText("检索 Keeper 账号"), "team-a");
+
+    expect(within(keeperPage).getByText("team-a@example.com")).toBeInTheDocument();
+    expect(within(keeperPage).queryByText("team-b@example.com")).not.toBeInTheDocument();
+    expect(within(keeperPage).queryByText("free@example.com")).not.toBeInTheDocument();
   });
 
   it("Keeper 页可以对账号列表选中项直接禁用、刷新和删除证书", async () => {
@@ -942,7 +1131,7 @@ describe("App", () => {
     }
     if (teamRow) {
       expect(within(teamRow).getByText("未同步")).toBeInTheDocument();
-      expect(within(teamRow).getByText("2")).toBeInTheDocument();
+      expect(within(teamRow).getByText("3")).toBeInTheDocument();
     }
   });
 

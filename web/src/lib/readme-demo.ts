@@ -15,6 +15,11 @@ export const README_DEMO_CONFIG: RuntimeConfig = {
     workerThreads: 4,
   },
   priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+  priorityPlanRanges: {},
+  oauthSettings: {
+    hotmailHelperUrl: "http://127.0.0.1:17373",
+    hotmailAccounts: [],
+  },
 };
 
 // 文档截图只展示当前页面能力，不依赖任何真实账号或实时后端。

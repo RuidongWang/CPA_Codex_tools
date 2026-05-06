@@ -3,13 +3,17 @@ import {
   clearLocalCache,
   downloadSelectedAccounts,
   fetchAccountList,
+  fetchHotmailVerificationCode,
   loadPayloadCache,
   loadRuntimeConfig,
+  pollCodexOAuthStatus,
   queryCachedAccounts,
   runKeeperDirectAction,
   runKeeperMaintenance,
   savePayloadCache,
   saveRuntimeConfig,
+  startCodexOAuth,
+  submitCodexOAuthCallback,
   syncAccountPriorities,
 } from "./api";
 import type { AccountItem, RuntimeConfig } from "../types";
@@ -28,6 +32,11 @@ const demoConfig: RuntimeConfig = {
     workerThreads: 2,
   },
   priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+  priorityPlanRanges: {},
+  oauthSettings: {
+    hotmailHelperUrl: "http://127.0.0.1:17373",
+    hotmailAccounts: [],
+  },
 };
 
 const demoItem: AccountItem = {
@@ -661,6 +670,149 @@ describe("browser runtime api", () => {
       },
     ]);
     expect(progress).toEqual([expect.objectContaining({ completed: 1, total: 1, currentLabel: "codex-a@example.com-free.json" })]);
+  });
+
+  it("startCodexOAuth 通过 CPA 管理接口生成 WebUI OAuth 链接", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      url: "https://auth.openai.com/oauth?state=oauth-state-1",
+    }));
+
+    const result = await startCodexOAuth(demoConfig);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://cpa.example/v0/management/codex-auth-url?is_webui=true");
+    expect(init.method).toBe("GET");
+    expect(result).toEqual({
+      authUrl: "https://auth.openai.com/oauth?state=oauth-state-1",
+      state: "oauth-state-1",
+      raw: { url: "https://auth.openai.com/oauth?state=oauth-state-1" },
+    });
+  });
+
+  it("pollCodexOAuthStatus 通过 state 查询 CPA OAuth 登录状态", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({
+      status: "success",
+      email: "a@hotmail.com",
+      message: "认证成功",
+    }));
+
+    const result = await pollCodexOAuthStatus(demoConfig, "oauth-state-1");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://cpa.example/v0/management/get-auth-status?state=oauth-state-1");
+    expect(init.method).toBe("GET");
+    expect(result).toEqual(expect.objectContaining({
+      state: "oauth-state-1",
+      status: "success",
+      email: "a@hotmail.com",
+      message: "认证成功",
+    }));
+  });
+
+  it("submitCodexOAuthCallback 通过 CPA 管理接口提交 Codex OAuth 回调 URL", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: "ok" }));
+
+    const result = await submitCodexOAuthCallback(
+      demoConfig,
+      "oauth-state-1",
+      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state-1",
+    );
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://cpa.example/v0/management/oauth-callback");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      provider: "codex",
+      redirect_url: "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state-1",
+      state: "oauth-state-1",
+    });
+    expect(result).toEqual(expect.objectContaining({
+      status: "success",
+      message: "回调 URL 已提交",
+    }));
+  });
+
+  it("fetchHotmailVerificationCode 通过 CPA api-call 对接 Microsoft API 获取验证码", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        status_code: 200,
+        body: JSON.stringify({
+          access_token: "microsoft-access-token",
+          refresh_token: "next-refresh-token",
+        }),
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        status_code: 200,
+        body: JSON.stringify({
+          value: [
+            {
+              id: "message-1",
+              subject: "Your temporary ChatGPT verification code",
+              from: { emailAddress: { address: "noreply@tm.openai.com", name: "OpenAI" } },
+              bodyPreview: "Enter this temporary verification code to continue: 123456",
+              receivedDateTime: "2026-05-06T04:45:00Z",
+            },
+          ],
+        }),
+      }));
+
+    const result = await fetchHotmailVerificationCode({
+      config: demoConfig,
+      helperUrl: "http://127.0.0.1:17373/",
+      account: {
+        id: "a@hotmail.com::client-id",
+        email: "a@hotmail.com",
+        clientId: "client-id",
+        refreshToken: "refresh-token",
+        status: "authorized",
+      },
+      filterAfterTimestamp: 1770000000000,
+      excludeCodes: ["000000"],
+      mailboxes: ["INBOX"],
+      authIndex: "idx-a",
+    });
+    const [tokenUrl, tokenInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [messagesUrl, messagesInit] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const tokenBody = JSON.parse(String(tokenInit.body));
+    const messagesBody = JSON.parse(String(messagesInit.body));
+
+    expect(tokenUrl).toBe("https://cpa.example/v0/management/api-call");
+    expect(tokenBody).toEqual(expect.objectContaining({
+      auth_index: "idx-a",
+      method: "POST",
+      url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      data: expect.stringContaining("refresh_token=refresh-token"),
+    }));
+    expect(messagesUrl).toBe("https://cpa.example/v0/management/api-call");
+    expect(messagesBody).toEqual(expect.objectContaining({
+      auth_index: "idx-a",
+      method: "GET",
+      url: expect.stringContaining("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"),
+      header: expect.objectContaining({
+        Authorization: "Bearer microsoft-access-token",
+      }),
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      code: "123456",
+      nextRefreshToken: "next-refresh-token",
+      transport: "graph",
+    }));
+  });
+
+  it("fetchHotmailVerificationCode 在 CPA 代理 Microsoft API 失败时返回可操作的中文错误", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+    await expect(fetchHotmailVerificationCode({
+      config: demoConfig,
+      helperUrl: "http://127.0.0.1:17373",
+      account: {
+        id: "a@hotmail.com::client-id",
+        email: "a@hotmail.com",
+        clientId: "client-id",
+        refreshToken: "refresh-token",
+        status: "authorized",
+      },
+    })).rejects.toThrow("CPA 代理 Microsoft API 请求失败");
   });
 
   it("syncAccountPriorities 在浏览器里直接 PATCH CPA fields 接口", async () => {

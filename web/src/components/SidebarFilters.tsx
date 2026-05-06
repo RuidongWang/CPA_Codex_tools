@@ -1,4 +1,4 @@
-export type SidebarPage = "quota" | "config" | "keeper";
+export type SidebarPage = "quota" | "config" | "keeper" | "oauth";
 
 interface SidebarFiltersProps {
   activePage: SidebarPage;
@@ -10,6 +10,7 @@ const PAGE_NAV_ITEMS: Array<{ key: SidebarPage; label: string; icon: string }> =
   { key: "quota", label: "额度", icon: "monitoring" },
   { key: "config", label: "配置", icon: "tune" },
   { key: "keeper", label: "Keeper", icon: "shield" },
+  { key: "oauth", label: "OAuth", icon: "key" },
 ];
 
 function pageAriaLabel(page: SidebarPage): string {
@@ -19,7 +20,10 @@ function pageAriaLabel(page: SidebarPage): string {
   if (page === "config") {
     return "配置页面";
   }
-  return "Keeper页面";
+  if (page === "keeper") {
+    return "Keeper页面";
+  }
+  return "Codex OAuth登录页面";
 }
 
 export function SidebarFilters(props: SidebarFiltersProps) {

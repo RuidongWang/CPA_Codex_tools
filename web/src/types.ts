@@ -8,12 +8,21 @@ export interface PriorityPlanPreview {
   minPriority: number | null;
 }
 
+export interface PriorityPlanRange {
+  minPriority: number;
+  maxPriority: number;
+}
+
+export type PriorityPlanRangeMap = Partial<Record<PriorityPlanKey, PriorityPlanRange>>;
+
 export interface RuntimeConfig {
   cpaBaseUrl: string;
   managementKey: string;
   queryConcurrency: number;
   keeperSettings: KeeperSettings;
   priorityPlanOrder: PriorityPlanKey[];
+  priorityPlanRanges: PriorityPlanRangeMap;
+  oauthSettings: OAuthSettings;
 }
 
 export interface KeeperSettings {
@@ -21,6 +30,26 @@ export interface KeeperSettings {
   expiryThresholdDays: number;
   enableRefresh: boolean;
   workerThreads: number;
+}
+
+export type HotmailAccountStatus = "pending" | "authorized" | "error";
+
+export interface HotmailAccount {
+  id: string;
+  email: string;
+  password?: string;
+  clientId: string;
+  refreshToken: string;
+  status: HotmailAccountStatus;
+  lastCode?: string;
+  lastCodeAt?: string;
+  lastError?: string;
+  updatedAt?: string;
+}
+
+export interface OAuthSettings {
+  hotmailHelperUrl: string;
+  hotmailAccounts: HotmailAccount[];
 }
 
 export interface MetaSummary {

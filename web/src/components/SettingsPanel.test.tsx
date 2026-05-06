@@ -15,6 +15,11 @@ const baseConfig: RuntimeConfig = {
     workerThreads: 6,
   },
   priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+  priorityPlanRanges: {},
+  oauthSettings: {
+    hotmailHelperUrl: "http://127.0.0.1:17373",
+    hotmailAccounts: [],
+  },
 };
 
 describe("SettingsPanel", () => {

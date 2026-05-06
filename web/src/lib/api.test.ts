@@ -105,6 +105,11 @@ describe("normalizeRuntimeConfig", () => {
     expect(config.queryConcurrency).toBe(DEFAULT_QUERY_CONCURRENCY);
     expect(config.keeperSettings).toEqual(DEFAULT_KEEPER_SETTINGS);
     expect(config.priorityPlanOrder).toEqual(["team", "plus", "free", "pro 5x", "pro 20x", "unknown"]);
+    expect(config.priorityPlanRanges).toEqual({});
+    expect(config.oauthSettings).toEqual({
+      hotmailHelperUrl: "http://127.0.0.1:17373",
+      hotmailAccounts: [],
+    });
   });
 
   it("normalizes keeper settings into safe bounds", () => {
@@ -124,6 +129,23 @@ describe("normalizeRuntimeConfig", () => {
       expiryThresholdDays: 0,
       enableRefresh: false,
       workerThreads: 1,
+    });
+  });
+
+  it("normalizes priority plan ranges and drops invalid entries", () => {
+    const config = normalizeRuntimeConfig({
+      cpaBaseUrl: "https://cpa.example/",
+      managementKey: "example-management-key",
+      priorityPlanRanges: {
+        free: { minPriority: 20, maxPriority: 1 },
+        team: { minPriority: "10", maxPriority: "20" } as never,
+        plus: { minPriority: "abc", maxPriority: 5 } as never,
+      },
+    });
+
+    expect(config.priorityPlanRanges).toEqual({
+      team: { minPriority: 10, maxPriority: 20 },
+      free: { minPriority: 1, maxPriority: 20 },
     });
   });
 });

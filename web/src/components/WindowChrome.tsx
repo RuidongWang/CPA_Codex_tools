@@ -1,13 +1,11 @@
 import { APP_VERSION_LABEL } from "../lib/app-version";
 
-const REPOSITORY_URL = "https://github.com/RuidongWang/CPA_Codex_tools";
-
 interface WindowChromeProps {
   onOpenSettings: () => void;
   onLogout: () => void;
 }
 
-// Web-only 顶栏保留产品标题、仓库链接、退出和设置入口。
+// Web-only 顶栏保留产品标题、退出和设置入口。
 export function WindowChrome({ onOpenSettings, onLogout }: WindowChromeProps) {
   return (
     <div className="window-chrome">
@@ -25,15 +23,6 @@ export function WindowChrome({ onOpenSettings, onLogout }: WindowChromeProps) {
         </div>
         <div className="window-chrome__drag-spacer" />
       </div>
-      <a
-        className="window-chrome__repo-link"
-        href={REPOSITORY_URL}
-        aria-label="打开 GitHub 仓库"
-        target="_blank"
-        rel="noreferrer noopener"
-      >
-        github.com/RuidongWang/CPA_Codex_tools
-      </a>
       <div className="window-chrome__actions">
         <button
           type="button"

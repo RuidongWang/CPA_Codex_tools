@@ -1,4 +1,5 @@
-import { normalizePriorityPlanKey, normalizePriorityPlanOrder, PRIORITY_PLAN_KEYS } from "./priority";
+import { normalizePriorityPlanKey, normalizePriorityPlanOrder, normalizePriorityPlanRanges, PRIORITY_PLAN_KEYS } from "./priority";
+import { normalizeHotmailHelperUrl, normalizeOAuthSettings } from "./oauth";
 import {
   clearWebPayloadCache,
   clearWebQuotaSnapshots,
@@ -11,6 +12,7 @@ import {
 import type {
   AccountItem,
   DownloadedAccountConfig,
+  HotmailAccount,
   KeeperDirectAction,
   KeeperItemReport,
   KeeperRunResult,
@@ -19,6 +21,47 @@ import type {
   QueryProgressEvent,
   RuntimeConfig,
 } from "../types";
+
+export interface CodexOAuthStartResult {
+  authUrl: string;
+  state: string;
+  raw: Record<string, unknown>;
+}
+
+export interface CodexOAuthStatusResult {
+  state: string;
+  status: "pending" | "success" | "error";
+  message: string;
+  email: string;
+  raw: Record<string, unknown>;
+}
+
+export interface CodexOAuthCallbackResult {
+  state: string;
+  status: "pending" | "success" | "error";
+  message: string;
+  raw: Record<string, unknown>;
+}
+
+export interface HotmailVerificationCodeResult {
+  code: string;
+  nextRefreshToken: string;
+  transport: string;
+  raw: Record<string, unknown>;
+}
+
+export interface HotmailVerificationCodeInput {
+  config?: RuntimeConfig;
+  helperUrl: string;
+  account: HotmailAccount;
+  authIndex?: string;
+  top?: number;
+  mailboxes?: string[];
+  senderFilters?: string[];
+  subjectFilters?: string[];
+  excludeCodes?: string[];
+  filterAfterTimestamp?: number;
+}
 
 // 开源版不内置开发期地址，这里只保留示例占位，避免把本地端口写死到产物和文档里。
 export const DEFAULT_CPA_BASE_URL = "https://cpa.example/";
@@ -34,6 +77,10 @@ const OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const CODEX_USER_AGENT = "codex_cli_rs/0.76.0 (Debian 13.0.0; x86_64) WindowsTerminal";
+const MICROSOFT_GRAPH_SCOPES = "offline_access https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read";
+const MICROSOFT_GRAPH_DEFAULT_SCOPE = "https://graph.microsoft.com/.default";
+const MICROSOFT_GRAPH_API_BASE = "https://graph.microsoft.com/v1.0/me/mailFolders";
+const MICROSOFT_OUTLOOK_API_BASE = "https://outlook.office.com/api/v2.0/me/mailfolders";
 const WINDOW_5H_SECONDS = 5 * 60 * 60;
 const WINDOW_7D_SECONDS = 7 * 24 * 60 * 60;
 const LOW_5H_THRESHOLD = 20;
@@ -69,6 +116,75 @@ interface WebQuotaReport extends WebAuthRecord {
   quota_reset_label: string | null;
   quota_updated_at: string | null;
 }
+
+interface MicrosoftTokenStrategy {
+  name: string;
+  url: string;
+  extraData?: Record<string, string>;
+}
+
+interface MicrosoftTransportPlan {
+  transport: "graph" | "outlook";
+  strategyNames: string[];
+}
+
+interface MicrosoftAccessTokenResult {
+  accessToken: string;
+  nextRefreshToken: string;
+  tokenStrategy: string;
+}
+
+interface MicrosoftMailMessage {
+  id: string;
+  mailbox: string;
+  subject: string;
+  from: {
+    emailAddress: {
+      address: string;
+      name: string;
+    };
+  };
+  bodyPreview: string;
+  body: {
+    content: string;
+  };
+  receivedDateTime: string;
+  receivedTimestamp: number;
+}
+
+const MICROSOFT_TOKEN_STRATEGIES: MicrosoftTokenStrategy[] = [
+  {
+    name: "entra-common-delegated",
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    extraData: { scope: MICROSOFT_GRAPH_SCOPES },
+  },
+  {
+    name: "entra-consumers-delegated",
+    url: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+    extraData: { scope: MICROSOFT_GRAPH_SCOPES },
+  },
+  {
+    name: "entra-common-default",
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    extraData: { scope: MICROSOFT_GRAPH_DEFAULT_SCOPE },
+  },
+  {
+    name: "entra-common-outlook",
+    url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    extraData: {},
+  },
+];
+
+const MICROSOFT_TRANSPORT_PLANS: MicrosoftTransportPlan[] = [
+  {
+    transport: "graph",
+    strategyNames: ["entra-common-delegated", "entra-consumers-delegated", "entra-common-default"],
+  },
+  {
+    transport: "outlook",
+    strategyNames: ["entra-common-outlook", "entra-common-delegated", "entra-consumers-delegated"],
+  },
+];
 
 export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, "_blank", "noopener,noreferrer");
@@ -156,6 +272,8 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig> | null | un
     queryConcurrency,
     keeperSettings: normalizeKeeperSettings(raw.keeperSettings),
     priorityPlanOrder: normalizePriorityPlanOrder(raw.priorityPlanOrder ?? PRIORITY_PLAN_KEYS),
+    priorityPlanRanges: normalizePriorityPlanRanges(raw.priorityPlanRanges),
+    oauthSettings: normalizeOAuthSettings(raw.oauthSettings),
   };
 }
 
@@ -571,6 +689,469 @@ async function fetchManagementJson(config: RuntimeConfig, path: string, init: Re
     const detail = error instanceof Error ? error.message : "未知解析错误";
     throw new Error(`CPA 管理接口没有返回合法 JSON: ${detail}`);
   }
+}
+
+function extractStateFromUrl(input: string): string {
+  try {
+    return new URL(input).searchParams.get("state") ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export async function startCodexOAuth(config: RuntimeConfig): Promise<CodexOAuthStartResult> {
+  const raw = await fetchManagementJson(config, "/v0/management/codex-auth-url", { method: "GET" }, { is_webui: "true" });
+  const data = readRecord(raw.data);
+  const authUrl = firstNonEmpty(raw.url, raw.auth_url, raw.authUrl, data.url, data.auth_url, data.authUrl);
+  const state = firstNonEmpty(raw.state, raw.auth_state, raw.authState, data.state, data.auth_state, data.authState, extractStateFromUrl(authUrl));
+  if (!authUrl || !authUrl.startsWith("http")) {
+    throw new Error("CPA 管理接口未返回有效的 Codex OAuth 登录链接");
+  }
+  if (!state) {
+    throw new Error("Codex OAuth 登录链接缺少 state");
+  }
+  return {
+    authUrl,
+    state,
+    raw,
+  };
+}
+
+function normalizeOAuthStatus(raw: Record<string, unknown>): "pending" | "success" | "error" {
+  const status = firstNonEmpty(raw.status, raw.state, raw.phase, raw.result).toLowerCase();
+  const ok = raw.ok === true || raw.success === true || raw.authenticated === true || raw.done === true;
+  const failed = raw.ok === false || raw.success === false || raw.error || raw.reason;
+  if (ok || /success|authenticated|complete|done|ok/.test(status)) {
+    return "success";
+  }
+  if (failed || /error|fail|failed|expired|invalid|timeout/.test(status)) {
+    return "error";
+  }
+  return "pending";
+}
+
+export async function pollCodexOAuthStatus(config: RuntimeConfig, state: string): Promise<CodexOAuthStatusResult> {
+  const trimmedState = state.trim();
+  if (!trimmedState) {
+    throw new Error("缺少 Codex OAuth state");
+  }
+  const raw = await fetchManagementJson(config, "/v0/management/get-auth-status", { method: "GET" }, { state: trimmedState });
+  const data = readRecord(raw.data);
+  const merged = { ...raw, ...data };
+  return {
+    state: trimmedState,
+    status: normalizeOAuthStatus(merged),
+    message: firstNonEmpty(merged.message, merged.detail, merged.reason, merged.error, merged.status),
+    email: firstNonEmpty(merged.email, merged.account_email, merged.accountEmail),
+    raw,
+  };
+}
+
+export async function submitCodexOAuthCallback(config: RuntimeConfig, state: string, redirectUrl: string): Promise<CodexOAuthCallbackResult> {
+  const trimmedState = state.trim();
+  const trimmedRedirectUrl = redirectUrl.trim();
+  if (!trimmedState) {
+    throw new Error("缺少 Codex OAuth state");
+  }
+  if (!trimmedRedirectUrl) {
+    throw new Error("请粘贴 OAuth 回调 URL");
+  }
+  const raw = await fetchManagementJson(config, "/v0/management/oauth-callback", {
+    method: "POST",
+    headers: buildManagementHeaders(config, "application/json"),
+    body: JSON.stringify({
+      provider: "codex",
+      redirect_url: trimmedRedirectUrl,
+      state: trimmedState,
+    }),
+  });
+  const data = readRecord(raw.data);
+  const merged = { ...raw, ...data };
+  return {
+    state: trimmedState,
+    status: normalizeOAuthStatus(merged),
+    message: firstNonEmpty(merged.message, merged.detail, merged.reason, merged.error) || "回调 URL 已提交",
+    raw,
+  };
+}
+
+function resolveMicrosoftTokenStrategy(name: string): MicrosoftTokenStrategy {
+  return MICROSOFT_TOKEN_STRATEGIES.find((strategy) => strategy.name === name) ?? MICROSOFT_TOKEN_STRATEGIES[0];
+}
+
+function normalizeMicrosoftMailboxLabel(mailbox?: string): string {
+  return /^junk(?:\s*e-?mail|\s*email)?$/i.test(String(mailbox || "").trim()) ? "Junk" : "INBOX";
+}
+
+function normalizeMicrosoftMailboxId(mailbox?: string): string {
+  return normalizeMicrosoftMailboxLabel(mailbox) === "Junk" ? "junkemail" : "inbox";
+}
+
+function normalizeMicrosoftMailboxList(mailboxes?: string[]): string[] {
+  const list = Array.isArray(mailboxes) && mailboxes.length ? mailboxes : ["INBOX"];
+  return [...new Set(list.map((mailbox) => normalizeMicrosoftMailboxLabel(mailbox)))];
+}
+
+function readMicrosoftApiCallBody(response: Record<string, unknown>, label: string): Record<string, unknown> {
+  const upstreamStatus = Number(firstPresent(response.status_code, response.statusCode, response.status) ?? 0);
+  const bodyValue = firstPresent(response.body, response.data, response.payload);
+  const bodyText = typeof bodyValue === "string" ? bodyValue : JSON.stringify(bodyValue ?? {});
+  if (upstreamStatus && (upstreamStatus < 200 || upstreamStatus >= 300)) {
+    throw new Error(`${label} 返回 HTTP ${upstreamStatus}: ${bodyText.trim()}`);
+  }
+  try {
+    return bodyText.trim() ? readRecord(JSON.parse(bodyText)) : {};
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} 没有返回合法 JSON: ${detail}`);
+  }
+}
+
+async function fetchMicrosoftApiCallJson(config: RuntimeConfig, payload: Record<string, unknown>, label: string): Promise<Record<string, unknown>> {
+  try {
+    const response = await fetchManagementJson(config, "/v0/management/api-call", {
+      method: "POST",
+      headers: buildManagementHeaders(config, "application/json"),
+      body: JSON.stringify(payload),
+    });
+    return readMicrosoftApiCallBody(response, label);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (/^CPA 代理 Microsoft API 请求失败/.test(detail)) {
+      throw error;
+    }
+    throw new Error(`CPA 代理 Microsoft API 请求失败：${detail}`);
+  }
+}
+
+async function exchangeMicrosoftRefreshTokenViaManagementApi(
+  config: RuntimeConfig,
+  clientId: string,
+  refreshToken: string,
+  strategyName: string,
+  authIndex = "",
+): Promise<MicrosoftAccessTokenResult> {
+  const strategy = resolveMicrosoftTokenStrategy(strategyName);
+  const body = new URLSearchParams({
+    client_id: clientId,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    ...(strategy.extraData ?? {}),
+  });
+  const payload = await fetchMicrosoftApiCallJson(
+    config,
+    {
+      ...(authIndex ? { auth_index: authIndex } : {}),
+      method: "POST",
+      url: strategy.url,
+      header: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      data: body.toString(),
+    },
+    `Microsoft token ${strategy.name}`,
+  );
+  const accessToken = firstNonEmpty(payload.access_token, payload.accessToken);
+  if (!accessToken) {
+    throw new Error(`${strategy.name}: token response missing access_token`);
+  }
+  return {
+    accessToken,
+    nextRefreshToken: firstNonEmpty(payload.refresh_token, payload.refreshToken),
+    tokenStrategy: strategy.name,
+  };
+}
+
+function buildMicrosoftMessagesUrl(transport: MicrosoftTransportPlan["transport"], mailbox: string, top: number): string {
+  const mailboxId = normalizeMicrosoftMailboxId(mailbox);
+  const params = new URLSearchParams({
+    $top: String(Math.max(1, Math.min(Math.trunc(top || 5), 30))),
+    $orderby: transport === "graph" ? "receivedDateTime desc" : "ReceivedDateTime desc",
+    $select: transport === "graph"
+      ? "id,internetMessageId,subject,from,bodyPreview,receivedDateTime"
+      : "Id,Subject,From,BodyPreview,Body,ReceivedDateTime",
+  });
+  const base = transport === "graph" ? MICROSOFT_GRAPH_API_BASE : MICROSOFT_OUTLOOK_API_BASE;
+  return `${base}/${mailboxId}/messages?${params.toString()}`;
+}
+
+function readNestedRecord(input: unknown): Record<string, unknown> {
+  return input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+}
+
+function normalizeMicrosoftMessage(input: unknown, mailbox: string): MicrosoftMailMessage {
+  const raw = readNestedRecord(input);
+  const sender = readNestedRecord(firstPresent(raw.From, raw.from));
+  const emailAddress = readNestedRecord(firstPresent(sender.EmailAddress, sender.emailAddress));
+  const body = readNestedRecord(firstPresent(raw.Body, raw.body));
+  const receivedDateTime = firstNonEmpty(raw.ReceivedDateTime, raw.receivedDateTime);
+  const receivedTimestamp = Date.parse(receivedDateTime);
+  return {
+    id: firstNonEmpty(raw.Id, raw.id, raw.internetMessageId),
+    mailbox: normalizeMicrosoftMailboxLabel(firstNonEmpty(raw.mailbox, mailbox)),
+    subject: firstNonEmpty(raw.Subject, raw.subject),
+    from: {
+      emailAddress: {
+        address: firstNonEmpty(emailAddress.Address, emailAddress.address),
+        name: firstNonEmpty(emailAddress.Name, emailAddress.name),
+      },
+    },
+    bodyPreview: firstNonEmpty(raw.BodyPreview, raw.bodyPreview),
+    body: {
+      content: firstNonEmpty(body.Content, body.content),
+    },
+    receivedDateTime,
+    receivedTimestamp: Number.isFinite(receivedTimestamp) ? receivedTimestamp : 0,
+  };
+}
+
+async function fetchMicrosoftMailboxMessagesViaManagementApi(
+  config: RuntimeConfig,
+  accessToken: string,
+  mailbox: string,
+  top: number,
+  transport: MicrosoftTransportPlan["transport"],
+  authIndex = "",
+): Promise<MicrosoftMailMessage[]> {
+  const payload = await fetchMicrosoftApiCallJson(
+    config,
+    {
+      ...(authIndex ? { auth_index: authIndex } : {}),
+      method: "GET",
+      url: buildMicrosoftMessagesUrl(transport, mailbox, top),
+      header: {
+        Accept: "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+    `Microsoft ${transport} mailbox ${normalizeMicrosoftMailboxLabel(mailbox)}`,
+  );
+  const messages = Array.isArray(payload.value) ? payload.value : [];
+  return messages.map((message) => normalizeMicrosoftMessage(message, mailbox));
+}
+
+async function fetchMicrosoftMailboxViaManagementApi(
+  config: RuntimeConfig,
+  clientId: string,
+  refreshToken: string,
+  mailbox: string,
+  top: number,
+  authIndex = "",
+): Promise<{
+  messages: MicrosoftMailMessage[];
+  nextRefreshToken: string;
+  transport: string;
+  tokenStrategy: string;
+}> {
+  const errors: string[] = [];
+  for (const plan of MICROSOFT_TRANSPORT_PLANS) {
+    for (const strategyName of plan.strategyNames) {
+      try {
+        const token = await exchangeMicrosoftRefreshTokenViaManagementApi(config, clientId, refreshToken, strategyName, authIndex);
+        const messages = await fetchMicrosoftMailboxMessagesViaManagementApi(config, token.accessToken, mailbox, top, plan.transport, authIndex);
+        return {
+          messages,
+          nextRefreshToken: token.nextRefreshToken,
+          transport: plan.transport,
+          tokenStrategy: token.tokenStrategy,
+        };
+      } catch (error) {
+        errors.push(`${plan.transport}/${strategyName}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+  throw new Error(`Hotmail API 对接请求失败：${errors.join(" | ")}`);
+}
+
+function getMicrosoftMessageSender(message: MicrosoftMailMessage): string {
+  return firstNonEmpty(message.from?.emailAddress?.address).trim();
+}
+
+function getMicrosoftMessageSearchText(message: MicrosoftMailMessage): string {
+  return [
+    message.subject,
+    message.bodyPreview,
+    message.body?.content,
+    getMicrosoftMessageSender(message),
+  ].join("\n");
+}
+
+function normalizeFilterText(value: unknown): string {
+  return firstNonEmpty(value).toLowerCase();
+}
+
+function isOpenAiMicrosoftMessage(message: MicrosoftMailMessage): boolean {
+  return /openai\.com|auth0\.openai\.com/i.test(`${getMicrosoftMessageSender(message)}\n${getMicrosoftMessageSearchText(message)}`);
+}
+
+function selectMicrosoftVerificationCode(
+  messages: MicrosoftMailMessage[],
+  options: {
+    filterAfterTimestamp?: number;
+    senderFilters?: string[];
+    subjectFilters?: string[];
+    excludeCodes?: string[];
+  },
+): { code: string; message: MicrosoftMailMessage | null; usedTimeFallback: boolean } {
+  const senderFilters = (options.senderFilters ?? []).map(normalizeFilterText).filter(Boolean);
+  const subjectFilters = (options.subjectFilters ?? []).map(normalizeFilterText).filter(Boolean);
+  const excludedCodes = new Set((options.excludeCodes ?? []).map((value) => String(value || "").trim()).filter(Boolean));
+  const hasExplicitFilters = senderFilters.length > 0 || subjectFilters.length > 0;
+  const orderedMessages = [...messages].sort((left, right) => right.receivedTimestamp - left.receivedTimestamp);
+
+  for (const usedTimeFallback of [false, true]) {
+    for (const message of orderedMessages) {
+      if (!usedTimeFallback && options.filterAfterTimestamp && message.receivedTimestamp && message.receivedTimestamp < options.filterAfterTimestamp) {
+        continue;
+      }
+      const searchText = getMicrosoftMessageSearchText(message);
+      const code = searchText.match(/\b(\d{6})\b/)?.[1] || "";
+      if (!code || excludedCodes.has(code)) {
+        continue;
+      }
+      if (!hasExplicitFilters && !isOpenAiMicrosoftMessage(message)) {
+        continue;
+      }
+      const sender = normalizeFilterText(getMicrosoftMessageSender(message));
+      const subject = normalizeFilterText(message.subject);
+      const preview = normalizeFilterText(message.bodyPreview);
+      const normalizedSearchText = normalizeFilterText(searchText);
+      const senderMatched = senderFilters.length === 0
+        ? true
+        : senderFilters.some((filter) => sender.includes(filter) || preview.includes(filter) || normalizedSearchText.includes(filter));
+      const subjectMatched = subjectFilters.length === 0
+        ? true
+        : subjectFilters.some((filter) => subject.includes(filter) || preview.includes(filter) || normalizedSearchText.includes(filter));
+      if (!senderMatched && !subjectMatched) {
+        continue;
+      }
+      return { code, message, usedTimeFallback };
+    }
+  }
+  return { code: "", message: null, usedTimeFallback: false };
+}
+
+async function fetchHotmailVerificationCodeViaMicrosoftApi(input: HotmailVerificationCodeInput): Promise<HotmailVerificationCodeResult> {
+  if (!input.config) {
+    throw new Error("缺少 CPA 配置，无法通过 API 对接读取 Hotmail 验证码");
+  }
+  const clientId = firstNonEmpty(input.account.clientId);
+  const initialRefreshToken = firstNonEmpty(input.account.refreshToken);
+  if (!clientId) {
+    throw new Error(`Hotmail 账号 ${input.account.email || input.account.id} 缺少客户端 ID。`);
+  }
+  if (!initialRefreshToken) {
+    throw new Error(`Hotmail 账号 ${input.account.email || input.account.id} 缺少刷新令牌（refresh token）。`);
+  }
+
+  let workingRefreshToken = initialRefreshToken;
+  let latestRefreshToken = "";
+  let latestTransport = "";
+  let latestTokenStrategy = "";
+  const messages: MicrosoftMailMessage[] = [];
+  for (const mailbox of normalizeMicrosoftMailboxList(input.mailboxes?.length ? input.mailboxes : ["INBOX", "Junk"])) {
+    const result = await fetchMicrosoftMailboxViaManagementApi(input.config, clientId, workingRefreshToken, mailbox, input.top ?? 10, input.authIndex);
+    if (result.nextRefreshToken) {
+      workingRefreshToken = result.nextRefreshToken;
+      latestRefreshToken = result.nextRefreshToken;
+    }
+    latestTransport = result.transport;
+    latestTokenStrategy = result.tokenStrategy;
+    messages.push(...result.messages);
+  }
+
+  const selected = selectMicrosoftVerificationCode(messages, {
+    filterAfterTimestamp: Math.max(0, Math.trunc(input.filterAfterTimestamp ?? 0)),
+    senderFilters: input.senderFilters ?? [],
+    subjectFilters: input.subjectFilters ?? [],
+    excludeCodes: input.excludeCodes ?? [],
+  });
+  if (!selected.code) {
+    throw new Error("未在 Hotmail 中找到验证码");
+  }
+  return {
+    code: selected.code,
+    nextRefreshToken: latestRefreshToken,
+    transport: latestTransport,
+    raw: {
+      source: "microsoft-api",
+      tokenStrategy: latestTokenStrategy,
+      usedTimeFallback: selected.usedTimeFallback,
+      message: selected.message,
+    },
+  };
+}
+
+async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs = WEB_MANAGEMENT_FETCH_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  let didTimeout = false;
+  const timeoutId = controller
+    ? setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+      }, timeoutMs)
+    : null;
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: init.signal ?? controller?.signal,
+    });
+    const text = await response.text();
+    const payload = text.trim() ? readRecord(JSON.parse(text)) : {};
+    if (!response.ok) {
+      throw new Error(firstNonEmpty(payload.message, payload.error, payload.detail, text) || `HTTP ${response.status}`);
+    }
+    return payload;
+  } catch (error) {
+    if (didTimeout || (error instanceof DOMException && error.name === "AbortError")) {
+      throw new Error(`Hotmail 验证码接口请求超时（${Math.round(timeoutMs / 1000)} 秒）`);
+    }
+    if (error instanceof TypeError && /failed to fetch|load failed|network/i.test(error.message)) {
+      throw new Error("无法连接 Hotmail helper，请确认本地 helper 已启动且地址可访问");
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(`Hotmail 验证码接口没有返回合法 JSON: ${error.message}`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+export async function fetchHotmailVerificationCode(input: HotmailVerificationCodeInput): Promise<HotmailVerificationCodeResult> {
+  if (input.config) {
+    return fetchHotmailVerificationCodeViaMicrosoftApi(input);
+  }
+  const helperUrl = normalizeHotmailHelperUrl(input.helperUrl);
+  const endpoint = `${helperUrl}/code`;
+  const raw = await fetchJsonWithTimeout(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: input.account.email,
+      clientId: input.account.clientId,
+      refreshToken: input.account.refreshToken,
+      top: Math.max(1, Math.min(Math.trunc(input.top ?? 10), 30)),
+      mailboxes: input.mailboxes?.length ? input.mailboxes : ["INBOX", "Junk"],
+      senderFilters: input.senderFilters ?? [],
+      subjectFilters: input.subjectFilters ?? [],
+      excludeCodes: input.excludeCodes ?? [],
+      filterAfterTimestamp: Math.max(0, Math.trunc(input.filterAfterTimestamp ?? 0)),
+    }),
+  });
+  const code = firstNonEmpty(raw.code, raw.otp, raw.verificationCode, raw.verification_code);
+  if (!code) {
+    throw new Error(firstNonEmpty(raw.message, raw.error) || "未在 Hotmail 中找到验证码");
+  }
+  return {
+    code,
+    nextRefreshToken: firstNonEmpty(raw.nextRefreshToken, raw.next_refresh_token),
+    transport: firstNonEmpty(raw.transport),
+    raw,
+  };
 }
 
 async function downloadAuthFile(config: RuntimeConfig, name: string): Promise<Record<string, unknown>> {
