@@ -1,3 +1,7 @@
 import "@testing-library/jest-dom";
 
-// 测试环境目前只需要注入 DOM 断言扩展，先保持 setup 轻量。
+const runtime = globalThis as typeof globalThis & { process?: { env?: Record<string, string | undefined> } };
+
+if (runtime.process?.env) {
+  runtime.process.env.TZ = "Asia/Shanghai";
+}
