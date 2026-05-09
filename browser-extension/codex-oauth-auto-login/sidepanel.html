@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CPA Codex OAuth</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <main class="sidepanel">
+      <header class="header">
+        <div>
+          <p class="eyebrow">CPA Codex</p>
+          <h1>OAuth 自动登录</h1>
+        </div>
+        <span id="state-dot" class="dot idle" aria-hidden="true"></span>
+      </header>
+
+      <section class="status" aria-live="polite">
+        <div class="status__topline">
+          <strong id="phase">Ready</strong>
+          <span id="updated" class="timestamp"></span>
+        </div>
+        <p id="message">打开本地 CPA 页面后读取账号池。</p>
+      </section>
+
+      <div class="actions">
+        <button id="read-pools" type="button">读取账号池</button>
+        <button id="start" type="button">开始登录</button>
+        <button id="stop" type="button" class="secondary">停止</button>
+      </div>
+
+      <section class="pool-summary">
+        <div>
+          <span>失效账号</span>
+          <strong id="invalid-count">0</strong>
+        </div>
+        <div>
+          <span>Hotmail</span>
+          <strong id="hotmail-count">0</strong>
+        </div>
+      </section>
+
+      <section class="pool-section" aria-label="失效账号列表">
+        <h2>失效账号</h2>
+        <div id="invalid-list" class="list">
+          <p class="empty">暂无数据</p>
+        </div>
+      </section>
+
+      <section class="pool-section" aria-label="Hotmail 账号池">
+        <h2>Hotmail 账号池</h2>
+        <div id="hotmail-list" class="list">
+          <p class="empty">暂无数据</p>
+        </div>
+      </section>
+    </main>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
