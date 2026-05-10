@@ -397,16 +397,10 @@ export function markOAuthJobError(job: OAuthJob, error: OAuthJobErrorInput, now:
   }
 
   if (error.errorType === "manual") {
-    if (job.attempt === 0) {
-      return { ...base, status: "queued", attempt: 1, retryCount: job.retryCount + 1 };
-    }
     return { ...base, status: "manual_required" };
   }
 
   if (error.errorType === "retryable") {
-    if (job.attempt === 0) {
-      return { ...base, status: "queued", attempt: 1, retryCount: job.retryCount + 1 };
-    }
     return { ...base, status: "failed" };
   }
 

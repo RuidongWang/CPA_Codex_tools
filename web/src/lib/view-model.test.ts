@@ -66,10 +66,25 @@ describe("buildOverviewStats", () => {
         last_query_at: null,
         quota_updated_at: null,
       },
+      {
+        name: "d.json",
+        email: "d@example.com",
+        plan_type: "free",
+        account_id: "acct-d",
+        auth_index: "idx-d",
+        priority: 96,
+        status: "unknown",
+        windows: [],
+        additional_windows: [],
+        error: "",
+        last_query_at: null,
+        quota_updated_at: null,
+      },
     ]);
 
     expect(stats.find((item) => item.label === "额度耗尽")?.value).toBe(1);
     expect(stats.find((item) => item.label === "查询异常")?.value).toBe(1);
+    expect(stats.find((item) => item.label === "未查询账号")?.value).toBe(1);
   });
 });
 

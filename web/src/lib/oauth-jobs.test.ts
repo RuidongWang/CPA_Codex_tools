@@ -430,31 +430,17 @@ describe("markOAuthJobError", () => {
     ).toEqual(expect.objectContaining({ status: "failed", attempt: 0, retryCount: 0, lastErrorType: "fatal", lastError: "bad_client" }));
   });
 
-  it("retries manual errors once and then marks manual_required", () => {
+  it("marks manual errors manual_required immediately without requeueing", () => {
     const first = markOAuthJobError(makeJob({ status: "session_clearing" }), { errorType: "manual", code: "captcha", message: "captcha required" }, NOW);
-    expect(first).toEqual(expect.objectContaining({ status: "queued", attempt: 1, retryCount: 1, lastErrorType: "manual", lastError: "captcha" }));
-
-    const second = markOAuthJobError(
-      makeJob({ status: "session_clearing", attempt: 1, retryCount: 1 }),
-      { errorType: "manual", code: "captcha" },
-      NOW,
-    );
-    expect(second).toEqual(expect.objectContaining({ status: "manual_required", lastErrorType: "manual", lastError: "captcha" }));
+    expect(first).toEqual(expect.objectContaining({ status: "manual_required", attempt: 0, retryCount: 0, lastErrorType: "manual", lastError: "captcha" }));
   });
 
-  it("retries retryable and timeout codes once, then fails", () => {
+  it("marks retryable and timeout codes failed immediately without requeueing", () => {
     const first = markOAuthJobError(makeJob({ status: "session_clearing" }), { errorType: "retryable", code: "timeout" }, NOW);
-    expect(first).toEqual(expect.objectContaining({ status: "queued", attempt: 1, retryCount: 1, lastErrorType: "retryable", lastError: "timeout" }));
-
-    const second = markOAuthJobError(
-      makeJob({ status: "session_clearing", attempt: 1, retryCount: 1 }),
-      { errorType: "retryable", code: "network_timeout" },
-      NOW,
-    );
-    expect(second).toEqual(expect.objectContaining({ status: "failed", lastErrorType: "retryable", lastError: "network_timeout" }));
+    expect(first).toEqual(expect.objectContaining({ status: "failed", attempt: 0, retryCount: 0, lastErrorType: "retryable", lastError: "timeout" }));
   });
 
-  it("handles account email mismatch as a retryable code, not as an error type", () => {
+  it("handles account email mismatch as a failed retryable code without requeueing", () => {
     const first = markOAuthJobError(
       makeJob({ status: "session_clearing" }),
       { errorType: "retryable", code: "account_email_mismatch" },
@@ -462,21 +448,12 @@ describe("markOAuthJobError", () => {
     );
     expect(first).toEqual(
       expect.objectContaining({
-        status: "queued",
-        attempt: 1,
-        retryCount: 1,
+        status: "failed",
+        attempt: 0,
+        retryCount: 0,
         lastErrorType: "retryable",
         lastError: "account_email_mismatch",
       }),
-    );
-
-    const second = markOAuthJobError(
-      makeJob({ status: "session_clearing", attempt: 1, retryCount: 1 }),
-      { errorType: "retryable", code: "account_email_mismatch" },
-      NOW,
-    );
-    expect(second).toEqual(
-      expect.objectContaining({ status: "failed", lastErrorType: "retryable", lastError: "account_email_mismatch" }),
     );
   });
 });

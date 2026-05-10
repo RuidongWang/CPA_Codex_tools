@@ -68,12 +68,14 @@ export function buildOverviewStats(items: AccountItem[]): OverviewStat[] {
   const low = items.filter((item) => item.status === "low").length;
   const exhausted = items.filter((item) => item.status === "exhausted").length;
   const errors = items.filter((item) => item.status === "error").length;
+  const unknown = items.filter((item) => item.status === "unknown").length;
   return [
     { key: "all", label: "账号总数", value: items.length, tone: "neutral", icon: "database", statusFilter: "all" },
     { key: "healthy", label: "状态正常", value: healthy, tone: "healthy", icon: "check_circle", statusFilter: "healthy" },
     { key: "low", label: "额度偏低", value: low, tone: "warning", icon: "warning", statusFilter: "low" },
     { key: "exhausted", label: "额度耗尽", value: exhausted, tone: "danger", icon: "hourglass_disabled", statusFilter: "exhausted" },
     { key: "error", label: "查询异常", value: errors, tone: "danger", icon: "error", statusFilter: "error" },
+    { key: "unknown", label: "未查询账号", value: unknown, tone: "neutral", icon: "help", statusFilter: "unknown" },
   ];
 }
 

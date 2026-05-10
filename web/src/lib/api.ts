@@ -63,6 +63,18 @@ export interface HotmailVerificationCodeInput {
   filterAfterTimestamp?: number;
 }
 
+export interface ManagementBaseUrlInspection {
+  valid: boolean;
+  error: string;
+  warning: string;
+  normalizedUrl: string;
+}
+
+export interface SaveRuntimeConfigOptions {
+  rememberManagementKey?: boolean;
+  rememberHotmailTokens?: boolean;
+}
+
 // 开源版不内置开发期地址，这里只保留示例占位，避免把本地端口写死到产物和文档里。
 export const DEFAULT_CPA_BASE_URL = "https://cpa.example/";
 export const DEFAULT_QUERY_CONCURRENCY = 6;
@@ -275,6 +287,39 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig> | null | un
     priorityPlanRanges: normalizePriorityPlanRanges(raw.priorityPlanRanges),
     oauthSettings: normalizeOAuthSettings(raw.oauthSettings),
   };
+}
+
+function isLocalManagementHost(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
+}
+
+export function inspectManagementBaseUrl(input: unknown): ManagementBaseUrlInspection {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw) {
+    return { valid: false, error: "请先填写 CPA 地址", warning: "请先填写 CPA 地址", normalizedUrl: "" };
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { valid: false, error: "CPA 地址格式无效", warning: "CPA 地址格式无效", normalizedUrl: "" };
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { valid: false, error: "CPA 地址仅支持 HTTP 或 HTTPS", warning: "CPA 地址仅支持 HTTP 或 HTTPS", normalizedUrl: "" };
+  }
+  if (parsed.username || parsed.password) {
+    return { valid: false, error: "CPA 地址不能包含用户名或密码", warning: "CPA 地址不能包含用户名或密码", normalizedUrl: "" };
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "/");
+  parsed.search = "";
+  parsed.hash = "";
+  const normalizedUrl = parsed.toString().replace(/\/$/, "");
+  const warning =
+    parsed.protocol === "http:" && !isLocalManagementHost(parsed.hostname)
+      ? "当前 CPA 地址使用非 HTTPS，管理密钥可能会通过明文传输"
+      : "";
+  return { valid: true, error: "", warning, normalizedUrl };
 }
 
 function createRequestId(command: string): string {
@@ -619,11 +664,11 @@ async function persistWebQuotaReports(reports: WebQuotaReport[]): Promise<WebQuo
 }
 
 function buildManagementUrl(config: RuntimeConfig, path: string, query?: Record<string, string>): string {
-  const baseUrl = config.cpaBaseUrl.trim();
-  if (!baseUrl) {
-    throw new Error("请先填写 CPA 地址");
+  const safety = inspectManagementBaseUrl(config.cpaBaseUrl);
+  if (!safety.valid) {
+    throw new Error(safety.warning);
   }
-  const base = new URL(baseUrl.replace(/\/+$/, "/"));
+  const base = new URL(`${safety.normalizedUrl}/`);
   base.pathname = path;
   base.search = "";
   for (const [key, value] of Object.entries(query ?? {})) {
@@ -755,6 +800,25 @@ export async function submitCodexOAuthCallback(config: RuntimeConfig, state: str
   }
   if (!trimmedRedirectUrl) {
     throw new Error("请粘贴 OAuth 回调 URL");
+  }
+  let parsedRedirectUrl: URL;
+  try {
+    parsedRedirectUrl = new URL(trimmedRedirectUrl);
+  } catch {
+    throw new Error("OAuth 回调 URL 格式无效");
+  }
+  if (parsedRedirectUrl.protocol !== "http:" && parsedRedirectUrl.protocol !== "https:") {
+    throw new Error("OAuth 回调 URL 仅支持 HTTP 或 HTTPS");
+  }
+  const callbackState = parsedRedirectUrl.searchParams.get("state")?.trim() ?? "";
+  if (!callbackState) {
+    throw new Error("OAuth 回调 URL 缺少 state");
+  }
+  if (callbackState !== trimmedState) {
+    throw new Error("OAuth 回调 URL state 不匹配");
+  }
+  if (!firstNonEmpty(parsedRedirectUrl.searchParams.get("code"), parsedRedirectUrl.searchParams.get("error"))) {
+    throw new Error("OAuth 回调 URL 缺少 code 或 error");
   }
   const raw = await fetchManagementJson(config, "/v0/management/oauth-callback", {
     method: "POST",
@@ -2176,11 +2240,36 @@ export async function queryCachedAccounts(
 }
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
-  return normalizeRuntimeConfig(readWebStorage<Partial<RuntimeConfig>>(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]));
+  const rawConfig = readWebStorage<Partial<RuntimeConfig>>(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
+  const normalized = normalizeRuntimeConfig(rawConfig);
+  const shouldStripHistoricalHotmailTokens =
+    rawConfig?.oauthSettings &&
+    normalizeOAuthSettings(rawConfig.oauthSettings).rememberHotmailTokens !== true &&
+    normalized.oauthSettings.hotmailAccounts.length > 0;
+  if (shouldStripHistoricalHotmailTokens) {
+    const sanitized = sanitizeRuntimeConfigForStorage(normalized, { rememberHotmailTokens: false });
+    writeWebStorage(WEB_RUNTIME_CONFIG_KEY, sanitized, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
+    return sanitized;
+  }
+  return normalized;
 }
 
-export async function saveRuntimeConfig(config: RuntimeConfig): Promise<void> {
-  writeWebStorage(WEB_RUNTIME_CONFIG_KEY, normalizeRuntimeConfig(config), [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
+function sanitizeRuntimeConfigForStorage(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): RuntimeConfig {
+  const normalized = normalizeRuntimeConfig(config);
+  const rememberHotmailTokens = options.rememberHotmailTokens ?? normalized.oauthSettings.rememberHotmailTokens;
+  return {
+    ...normalized,
+    managementKey: options.rememberManagementKey === false ? "" : normalized.managementKey,
+    oauthSettings: {
+      ...normalized.oauthSettings,
+      rememberHotmailTokens,
+      hotmailAccounts: rememberHotmailTokens ? normalized.oauthSettings.hotmailAccounts : [],
+    },
+  };
+}
+
+export async function saveRuntimeConfig(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): Promise<void> {
+  writeWebStorage(WEB_RUNTIME_CONFIG_KEY, sanitizeRuntimeConfigForStorage(config, options), [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
 }
 
 export async function loadPayloadCache(): Promise<PayloadEnvelope | null> {

@@ -26,6 +26,7 @@ test('manifest permissions are limited to required extension capabilities', () =
     'activeTab',
     'browsingData',
     'cookies',
+    'debugger',
     'scripting',
     'sidePanel',
     'storage',

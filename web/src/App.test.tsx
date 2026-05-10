@@ -63,6 +63,7 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
     error: "",
   },
   mockApi: {
+    inspectManagementBaseUrl: vi.fn(() => ({ normalizedUrl: "https://cpa.example/", error: "", warning: "" })),
     loadRuntimeConfig: vi.fn(),
     loadPayloadCache: vi.fn(),
     saveRuntimeConfig: vi.fn(),
@@ -91,6 +92,7 @@ vi.mock("./lib/api", () => ({
     enableRefresh: true,
     workerThreads: 6,
   },
+  inspectManagementBaseUrl: mockApi.inspectManagementBaseUrl,
   loadRuntimeConfig: mockApi.loadRuntimeConfig,
   loadPayloadCache: mockApi.loadPayloadCache,
   saveRuntimeConfig: mockApi.saveRuntimeConfig,
@@ -236,6 +238,7 @@ function makePayload(overrides: Partial<typeof listPayload> & { items?: MockItem
 beforeEach(() => {
   vi.resetAllMocks();
   window.history.replaceState({}, "", "/");
+  mockApi.inspectManagementBaseUrl.mockReturnValue({ normalizedUrl: "https://cpa.example/", error: "", warning: "" });
   mockApi.loadRuntimeConfig.mockResolvedValue({
     cpaBaseUrl: "https://cpa.example/",
     managementKey: "demo-key",
@@ -364,7 +367,7 @@ describe("App", () => {
     expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
   });
 
-  it("登录页填写地址和管理密钥后会验证并进入控制台", async () => {
+  it("登录页填写地址和管理密钥后只进入控制台，不自动加载账号", async () => {
     const user = userEvent.setup();
     mockApi.loadRuntimeConfig.mockResolvedValueOnce({
       cpaBaseUrl: "",
@@ -379,21 +382,55 @@ describe("App", () => {
     await user.type(screen.getByPlaceholderText("输入管理密钥"), "demo-key");
     await user.click(screen.getByRole("button", { name: "登录" }));
 
-    await waitFor(() => {
-      expect(mockApi.fetchAccountList).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cpaBaseUrl: "https://cpa.example/",
-          managementKey: "demo-key",
-        }),
-      );
-    });
-    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    expect(await screen.findByText("登录成功，请手动加载账号")).toBeInTheDocument();
+    expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
+    expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
     expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         cpaBaseUrl: "https://cpa.example/",
         managementKey: "demo-key",
       }),
+      expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
     );
+  });
+
+  it("登录时不记住管理密钥后，保存配置和设置都不会要求持久化密钥", async () => {
+    const user = userEvent.setup();
+    mockApi.loadRuntimeConfig.mockResolvedValueOnce({
+      cpaBaseUrl: "",
+      managementKey: "",
+      queryConcurrency: 6,
+      priorityPlanOrder: ["team", "plus", "free", "pro 5x", "pro 20x", "unknown"],
+    });
+
+    render(<App />);
+
+    await user.type(await screen.findByRole("textbox", { name: "CPA 管理地址" }), "https://cpa.example/");
+    await user.type(screen.getByPlaceholderText("输入管理密钥"), "demo-key");
+    await user.click(screen.getByLabelText("记住本次登录"));
+    await user.click(screen.getByRole("button", { name: "登录" }));
+
+    expect(await screen.findByText("登录成功，请手动加载账号")).toBeInTheDocument();
+    expect(mockApi.fetchAccountList).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        expect.objectContaining({ rememberManagementKey: false }),
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "配置页面" }));
+    await user.click(screen.getByRole("button", { name: "保存配置" }));
+    await user.click(screen.getByRole("button", { name: "打开设置" }));
+    await user.click(await screen.findByRole("button", { name: "保存设置" }));
+
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledTimes(3);
+    });
+    for (const [savedConfig, options] of mockApi.saveRuntimeConfig.mock.calls) {
+      expect(savedConfig).toEqual(expect.objectContaining({ managementKey: "demo-key" }));
+      expect(options).toEqual(expect.objectContaining({ rememberManagementKey: false }));
+    }
   });
 
   it("初始化失败时会展示 Rust 返回的具体错误", async () => {
@@ -476,6 +513,7 @@ describe("App", () => {
           cpaBaseUrl: "https://cpa.example/",
           managementKey: "demo-key",
         }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
       );
     });
   });
@@ -497,17 +535,51 @@ describe("App", () => {
     await user.click(within(oauthPage).getByRole("button", { name: "导入 Hotmail 账号" }));
 
     await waitFor(() => {
-      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(expect.objectContaining({
-        oauthSettings: expect.objectContaining({
-          hotmailAccounts: [
-            expect.objectContaining({
-              email: "alice@hotmail.com",
-              clientId: "client-id",
-              refreshToken: "refresh-token",
-            }),
-          ],
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthSettings: expect.objectContaining({
+            hotmailAccounts: [
+              expect.objectContaining({
+                email: "alice@hotmail.com",
+                clientId: "client-id",
+                refreshToken: "refresh-token",
+              }),
+            ],
+          }),
         }),
-      }));
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+      );
+    });
+  });
+
+  it("导入 Hotmail 账号时默认不要求持久化 token", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByText("free@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Codex OAuth登录页面" }));
+
+    const oauthPage = screen.getByRole("region", { name: "Codex OAuth登录页面" });
+    await user.type(
+      within(oauthPage).getByLabelText("Hotmail 批量导入"),
+      "账号----密码----ID----Token\nalice@hotmail.com----pass----client-id----refresh-token",
+    );
+    await user.click(within(oauthPage).getByRole("button", { name: "导入 Hotmail 账号" }));
+
+    await waitFor(() => {
+      expect(mockApi.saveRuntimeConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          oauthSettings: expect.objectContaining({
+            hotmailAccounts: [
+              expect.objectContaining({
+                email: "alice@hotmail.com",
+                refreshToken: "refresh-token",
+              }),
+            ],
+          }),
+        }),
+        expect.objectContaining({ rememberHotmailTokens: false }),
+      );
     });
   });
 
@@ -764,6 +836,115 @@ describe("App", () => {
     expect(screen.queryByText("删除证书进度")).not.toBeInTheDocument();
   });
 
+  it("Keeper 页可以筛选同名重复授权文件并确认删除建议项", async () => {
+    const user = userEvent.setup();
+    const duplicatePayload = makePayload({
+      items: [
+        makeItem({
+          name: "Codex-Duplicate.JSON",
+          email: "keep-late@example.com",
+          auth_index: "idx-keep-late",
+          status: "healthy",
+          expired: "2026-05-20T00:00:00Z",
+        }),
+        makeItem({
+          name: "codex-duplicate.json",
+          email: "delete-error@example.com",
+          auth_index: "idx-delete-error",
+          status: "error",
+          error: "查询异常",
+          expired: "2026-05-25T00:00:00Z",
+        }),
+        makeItem({
+          name: "CODEX-DUPLICATE.json",
+          email: "delete-early@example.com",
+          auth_index: "idx-delete-early",
+          status: "healthy",
+          expired: "2026-05-08T00:00:00Z",
+        }),
+        makeItem({
+          name: "codex-unique.json",
+          email: "unique@example.com",
+          auth_index: "idx-unique",
+          status: "healthy",
+          expired: "2026-05-09T00:00:00Z",
+        }),
+      ],
+    });
+    mockApi.fetchAccountList.mockResolvedValue(duplicatePayload);
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+
+    expect(await screen.findByText("keep-late@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    await user.click(within(keeperPage).getByRole("button", { name: "筛选重复证书" }));
+
+    const duplicateReview = within(keeperPage).getByRole("region", { name: "重复授权文件删除筛选" });
+    expect(within(duplicateReview).getByText("codex-duplicate.json")).toBeInTheDocument();
+    expect(within(duplicateReview).getByText("保留：keep-late@example.com")).toBeInTheDocument();
+    expect(within(duplicateReview).getByRole("checkbox", { name: /删除 delete-error@example.com/ })).toBeChecked();
+    expect(within(duplicateReview).getByRole("checkbox", { name: /删除 delete-early@example.com/ })).toBeChecked();
+    expect(within(duplicateReview).getByRole("checkbox", { name: /保留 keep-late@example.com/ })).not.toBeChecked();
+
+    await user.click(within(duplicateReview).getByRole("button", { name: "删除选中重复证书 (2)" }));
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("确认删除 2 个重复授权文件"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("delete-error@example.com"));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("delete-early@example.com"));
+    await waitFor(() => {
+      expect(mockApi.runKeeperDirectAction).toHaveBeenLastCalledWith(
+        expect.objectContaining({ managementKey: "demo-key" }),
+        [
+          expect.objectContaining({ auth_index: "idx-delete-error" }),
+          expect.objectContaining({ auth_index: "idx-delete-early" }),
+        ],
+        "delete",
+        expect.any(Function),
+      );
+    });
+  });
+
+  it("Keeper 页可以按相同邮箱筛选不同文件名的重复授权文件", async () => {
+    const user = userEvent.setup();
+    const duplicatePayload = makePayload({
+      items: [
+        makeItem({
+          name: "codex-brady-free.json",
+          email: "bradybroughman59320@outlook.com",
+          auth_index: "idx-brady-keep",
+          status: "healthy",
+          expired: "2026-05-20T00:00:00Z",
+        }),
+        makeItem({
+          name: "codex-brady-unknown.json",
+          email: "BradyBroughman59320@outlook.com",
+          auth_index: "idx-brady-delete",
+          status: "error",
+          error: "查询异常",
+          expired: "2026-05-16T00:00:00Z",
+        }),
+      ],
+    });
+    mockApi.fetchAccountList.mockResolvedValue(duplicatePayload);
+    render(<App />);
+
+    expect(await screen.findByText("bradybroughman59320@outlook.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Keeper页面" }));
+
+    const keeperPage = screen.getByRole("region", { name: "Keeper 操作页面" });
+    await user.type(within(keeperPage).getByLabelText("检索 Keeper 账号"), "bradybroughman59320@outlook.com");
+    expect(within(keeperPage).getAllByText(/bradybroughman59320@outlook.com/i)).toHaveLength(2);
+
+    await user.click(within(keeperPage).getByRole("button", { name: "筛选重复证书" }));
+
+    const duplicateReview = within(keeperPage).getByRole("region", { name: "重复授权文件删除筛选" });
+    expect(within(duplicateReview).getAllByText("bradybroughman59320@outlook.com").length).toBeGreaterThan(0);
+    expect(within(duplicateReview).getByText("保留：bradybroughman59320@outlook.com")).toBeInTheDocument();
+    expect(within(duplicateReview).getByRole("checkbox", { name: /删除 BradyBroughman59320@outlook.com/ })).toBeChecked();
+  });
+
   it("Keeper 演练会调用维护接口并展示结果", async () => {
     const user = userEvent.setup();
     render(<App />);
@@ -810,6 +991,7 @@ describe("App", () => {
             workerThreads: 9,
           }),
         }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
       );
     });
   });
@@ -830,7 +1012,7 @@ describe("App", () => {
     expect(screen.queryByText("管理配置、筛选入口和选中查询都收在这里。")).not.toBeInTheDocument();
   });
 
-  it("总览区展示五张指标卡并包含耗尽指标", async () => {
+  it("总览区展示六张指标卡并包含未查询指标", async () => {
     render(<App />);
 
     expect(await screen.findByText("free@example.com")).toBeInTheDocument();
@@ -839,6 +1021,7 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "额度偏低 0" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "额度耗尽 0" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "查询异常 0" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "未查询账号 3" })).toBeInTheDocument();
   });
 
   it("大卡片点击后会直接切换状态筛选", async () => {
@@ -865,6 +1048,8 @@ describe("App", () => {
     expect(await screen.findByText("free@example.com")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "查询异常 1" }));
 
+    expect(screen.getByRole("button", { name: "账号总数 3" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "未查询账号 2" })).toBeInTheDocument();
     expect(screen.getByText("free@example.com")).toBeInTheDocument();
     expect(screen.queryByText("team-a@example.com")).not.toBeInTheDocument();
   });
@@ -971,6 +1156,7 @@ describe("App", () => {
         expect.objectContaining({
           queryConcurrency: 4,
         }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
       );
     });
   });

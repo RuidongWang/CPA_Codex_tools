@@ -5,6 +5,7 @@ export const DEFAULT_HOTMAIL_HELPER_URL = "http://127.0.0.1:17373";
 export const DEFAULT_OAUTH_SETTINGS: OAuthSettings = {
   hotmailHelperUrl: DEFAULT_HOTMAIL_HELPER_URL,
   hotmailAccounts: [],
+  rememberHotmailTokens: false,
 };
 
 export type HotmailImportAccount = Pick<HotmailAccount, "email" | "password" | "clientId" | "refreshToken">;
@@ -91,6 +92,7 @@ export function normalizeOAuthSettings(input: Partial<OAuthSettings> | null | un
   return {
     hotmailHelperUrl: normalizeHotmailHelperUrl(raw.hotmailHelperUrl),
     hotmailAccounts: accounts,
+    rememberHotmailTokens: raw.rememberHotmailTokens === true,
   };
 }
 

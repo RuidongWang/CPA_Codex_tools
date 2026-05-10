@@ -144,3 +144,90 @@ test('createSafeStatus strips secret-looking fields and callback query secrets',
   assert.equal(status.nested.email, 'person@example.com');
   assert.equal(typeof status.updatedAt, 'number');
 });
+
+test('builds trusted click mouse events from action center coordinates', () => {
+  assert.deepEqual(core.buildTrustedClickMouseEvents({ centerX: 100, centerY: 96 }), [
+    {
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseMoved', x: 100, y: 96, button: 'none' },
+    },
+    {
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mousePressed', x: 100, y: 96, button: 'left', clickCount: 1 },
+    },
+    {
+      method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseReleased', x: 100, y: 96, button: 'left', clickCount: 1 },
+    },
+  ]);
+});
+
+test('normalizes OpenAI content action failures without losing code and error type', () => {
+  assert.deepEqual(core.normalizeOpenAIActionFailure('CLICK_ACTION', {
+    ok: false,
+    error: 'The continue button did not advance.',
+    code: 'openai_click_no_transition',
+    errorType: 'retryable',
+  }), {
+    action: 'CLICK_ACTION',
+    message: 'The continue button did not advance.',
+    code: 'openai_click_no_transition',
+    errorType: 'retryable',
+  });
+});
+
+test('uses string OpenAI content action errors as fallback codes', () => {
+  assert.deepEqual(core.normalizeOpenAIActionFailure('GET_ACTION_RECT', {
+    ok: false,
+    error: 'action_not_found',
+  }), {
+    action: 'GET_ACTION_RECT',
+    message: 'action_not_found',
+    code: 'action_not_found',
+    errorType: '',
+  });
+});
+
+test('normalizes automation timing settings from partial user input', () => {
+  assert.equal(Object.isFrozen(core.DEFAULT_AUTOMATION_SETTINGS), true);
+  assert.deepEqual(core.normalizeAutomationSettings(), core.DEFAULT_AUTOMATION_SETTINGS);
+  assert.deepEqual(core.normalizeAutomationSettings({
+    stepWaitMs: '2500.9',
+    clickProgressTimeoutMs: 4000,
+    blockedSkipDelayMs: 45000,
+    betweenJobsDelayMs: 30000,
+    jobTimeoutMs: 120000,
+    ignored: 1,
+  }), {
+    stepWaitMs: 2500,
+    clickProgressTimeoutMs: 4000,
+    blockedSkipDelayMs: 45000,
+    betweenJobsDelayMs: 30000,
+    jobTimeoutMs: 120000,
+  });
+});
+
+test('clamps automation timing settings to supported bounds', () => {
+  assert.deepEqual(core.normalizeAutomationSettings({
+    stepWaitMs: 50,
+    clickProgressTimeoutMs: 9999999,
+    blockedSkipDelayMs: -1,
+    betweenJobsDelayMs: 9999999,
+    jobTimeoutMs: 'bad',
+  }), {
+    stepWaitMs: 1000,
+    clickProgressTimeoutMs: 60000,
+    blockedSkipDelayMs: 0,
+    betweenJobsDelayMs: 600000,
+    jobTimeoutMs: 300000,
+  });
+});
+
+test('computes the extra one-time-code email wait only when pending', () => {
+  assert.equal(core.OTP_CODE_FETCH_EXTRA_WAIT_MS, 5000);
+  assert.equal(core.computeOtpCodeFetchDelayMs(true), 5000);
+  assert.equal(core.computeOtpCodeFetchDelayMs(false), 0);
+  assert.equal(core.computeOtpCodeFetchDelayMs(true, 2500), 2500);
+  assert.equal(core.computeOtpCodeFetchDelayMs(true, -1), 0);
+  assert.equal(core.computeOtpCodeFetchDelayMs(true, 'bad'), 0);
+});

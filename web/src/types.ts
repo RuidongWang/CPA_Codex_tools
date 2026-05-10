@@ -50,6 +50,7 @@ export interface HotmailAccount {
 export interface OAuthSettings {
   hotmailHelperUrl: string;
   hotmailAccounts: HotmailAccount[];
+  rememberHotmailTokens: boolean;
 }
 
 export type OAuthJobStatus =

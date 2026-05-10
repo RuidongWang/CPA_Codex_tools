@@ -27,6 +27,25 @@
   const CALLBACK_PATHS = Object.freeze(['/auth/callback', '/codex/callback']);
   const CALLBACK_PATH_SET = new Set(CALLBACK_PATHS);
   const SECRET_KEY_PATTERN = /(code|token|secret|password|refresh|authorization|cookie)/i;
+  const OTP_CODE_FETCH_EXTRA_WAIT_MS = 5000;
+  const DEFAULT_AUTOMATION_SETTINGS = Object.freeze({
+    stepWaitMs: 5000,
+    clickProgressTimeoutMs: 3000,
+    blockedSkipDelayMs: 30000,
+    betweenJobsDelayMs: 30000,
+    jobTimeoutMs: 5 * 60 * 1000,
+  });
+  const AUTOMATION_SETTING_LIMITS = Object.freeze({
+    stepWaitMs: Object.freeze({ min: 1000, max: 60000 }),
+    clickProgressTimeoutMs: Object.freeze({ min: 1000, max: 60000 }),
+    blockedSkipDelayMs: Object.freeze({ min: 0, max: 10 * 60 * 1000 }),
+    betweenJobsDelayMs: Object.freeze({ min: 0, max: 10 * 60 * 1000 }),
+    jobTimeoutMs: Object.freeze({ min: 30000, max: 30 * 60 * 1000 }),
+  });
+
+  function asString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+  }
 
   function parseUrl(value) {
     try {
@@ -153,23 +172,119 @@
     };
   }
 
+  function normalizeMillisecondsSetting(value, fallback, limits) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return fallback;
+    }
+    return Math.min(limits.max, Math.max(limits.min, Math.trunc(number)));
+  }
+
+  function normalizeAutomationSettings(input = {}) {
+    const source = input && typeof input === 'object' ? input : {};
+    return {
+      stepWaitMs: normalizeMillisecondsSetting(
+        source.stepWaitMs,
+        DEFAULT_AUTOMATION_SETTINGS.stepWaitMs,
+        AUTOMATION_SETTING_LIMITS.stepWaitMs
+      ),
+      clickProgressTimeoutMs: normalizeMillisecondsSetting(
+        source.clickProgressTimeoutMs,
+        DEFAULT_AUTOMATION_SETTINGS.clickProgressTimeoutMs,
+        AUTOMATION_SETTING_LIMITS.clickProgressTimeoutMs
+      ),
+      blockedSkipDelayMs: normalizeMillisecondsSetting(
+        source.blockedSkipDelayMs,
+        DEFAULT_AUTOMATION_SETTINGS.blockedSkipDelayMs,
+        AUTOMATION_SETTING_LIMITS.blockedSkipDelayMs
+      ),
+      betweenJobsDelayMs: normalizeMillisecondsSetting(
+        source.betweenJobsDelayMs,
+        DEFAULT_AUTOMATION_SETTINGS.betweenJobsDelayMs,
+        AUTOMATION_SETTING_LIMITS.betweenJobsDelayMs
+      ),
+      jobTimeoutMs: normalizeMillisecondsSetting(
+        source.jobTimeoutMs,
+        DEFAULT_AUTOMATION_SETTINGS.jobTimeoutMs,
+        AUTOMATION_SETTING_LIMITS.jobTimeoutMs
+      ),
+    };
+  }
+
   function pickPreferredLocalAppTab(tabs = []) {
     const localTabs = tabs.filter((tab) => isLocalAppUrl(tab?.url));
     return localTabs.find((tab) => tab.active) || localTabs[0] || null;
   }
 
+  function toFiniteNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  function buildTrustedClickMouseEvents(rect = {}) {
+    const x = toFiniteNumber(rect.centerX);
+    const y = toFiniteNumber(rect.centerY);
+    return [
+      {
+        method: 'Input.dispatchMouseEvent',
+        params: { type: 'mouseMoved', x, y, button: 'none' },
+      },
+      {
+        method: 'Input.dispatchMouseEvent',
+        params: { type: 'mousePressed', x, y, button: 'left', clickCount: 1 },
+      },
+      {
+        method: 'Input.dispatchMouseEvent',
+        params: { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 },
+      },
+    ];
+  }
+
+  function normalizeOpenAIActionFailure(action, response = {}) {
+    const rawError = response?.error;
+    const actionError = rawError && typeof rawError === 'object' ? rawError : {};
+    const stringError = typeof rawError === 'string' ? asString(rawError) : '';
+    const code = asString(actionError.code) || asString(response?.code) || stringError || asString(response?.errorType) || 'openai_action_failed';
+    const errorType = asString(actionError.errorType) || asString(response?.errorType) || '';
+    const message = asString(actionError.message)
+      || stringError
+      || asString(response?.message)
+      || `OpenAI helper action failed: ${action}`;
+    return {
+      action: asString(action),
+      message,
+      code,
+      errorType,
+    };
+  }
+
+  function computeOtpCodeFetchDelayMs(shouldWait, extraWaitMs = OTP_CODE_FETCH_EXTRA_WAIT_MS) {
+    const extraWait = Number(extraWaitMs);
+    if (!shouldWait || !Number.isFinite(extraWait) || extraWait <= 0) {
+      return 0;
+    }
+    return Math.trunc(extraWait);
+  }
+
   return {
+    AUTOMATION_SETTING_LIMITS,
     CALLBACK_PATHS,
+    DEFAULT_AUTOMATION_SETTINGS,
     LOCAL_HOSTS,
+    OTP_CODE_FETCH_EXTRA_WAIT_MS,
     OPENAI_AUTH_HOSTS,
     OPENAI_CLEAR_ORIGINS,
     OPENAI_RELATED_HOSTS,
     buildOpenAISessionRemovalOptions,
+    buildTrustedClickMouseEvents,
+    computeOtpCodeFetchDelayMs,
     createSafeStatus,
     isCallbackUrl,
     isLocalAppUrl,
     isOpenAIAuthUrl,
     isOpenAIRelatedUrl,
+    normalizeAutomationSettings,
+    normalizeOpenAIActionFailure,
     parseCallbackUrl,
     parseUrl,
     pickPreferredLocalAppTab,

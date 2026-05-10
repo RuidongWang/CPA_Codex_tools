@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CPA Codex OAuth Auto Login",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "description": "Assists a selected local CPA Codex account through the OpenAI OAuth login flow.",
   "permissions": [
     "tabs",
@@ -11,7 +11,8 @@
     "storage",
     "sidePanel",
     "cookies",
-    "browsingData"
+    "browsingData",
+    "debugger"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",

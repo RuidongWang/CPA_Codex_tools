@@ -55,6 +55,11 @@ example-two@hotmail.com----pass-2----client-2----refresh-token-2
 });
 
 describe("normalizeOAuthSettings", () => {
+  it("defaults rememberHotmailTokens to false and preserves explicit true", () => {
+    expect(normalizeOAuthSettings({}).rememberHotmailTokens).toBe(false);
+    expect(normalizeOAuthSettings({ rememberHotmailTokens: true }).rememberHotmailTokens).toBe(true);
+  });
+
   it("keeps valid helper url and drops incomplete hotmail accounts", () => {
     const settings = normalizeOAuthSettings({
       hotmailHelperUrl: "http://127.0.0.1:17373/",
@@ -74,6 +79,7 @@ describe("normalizeOAuthSettings", () => {
         status: "authorized",
       }),
     ]);
+    expect(settings.rememberHotmailTokens).toBe(false);
   });
 
   it("falls back to local helper for invalid helper url", () => {

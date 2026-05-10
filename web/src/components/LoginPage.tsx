@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DEFAULT_CPA_BASE_URL } from "../lib/api";
+import { DEFAULT_CPA_BASE_URL, inspectManagementBaseUrl } from "../lib/api";
 import type { RuntimeConfig } from "../types";
 
 interface LoginPageProps {
@@ -14,6 +14,9 @@ interface LoginPageProps {
 export function LoginPage(props: LoginPageProps) {
   const [showKey, setShowKey] = useState(false);
   const [rememberLogin, setRememberLogin] = useState(true);
+  const baseUrlInspection = inspectManagementBaseUrl(props.config.cpaBaseUrl);
+  const baseUrlNotice = baseUrlInspection.error || baseUrlInspection.warning;
+  const baseUrlNoticeTone = baseUrlInspection.error ? "danger" : "warning";
 
   const submitLabel = props.checking ? "恢复登录中" : props.busy ? "连接中" : "登录";
   const disabled = props.busy || props.checking;
@@ -59,6 +62,14 @@ export function LoginPage(props: LoginPageProps) {
                 autoComplete="url"
               />
             </span>
+            {baseUrlNotice ? (
+              <span className={`config-url-notice config-url-notice--${baseUrlNoticeTone}`} role="status">
+                <span className="material-symbols-outlined" aria-hidden="true">
+                  {baseUrlInspection.error ? "error" : "warning"}
+                </span>
+                <span>{baseUrlNotice}</span>
+              </span>
+            ) : null}
           </label>
 
           <label className="login-field">

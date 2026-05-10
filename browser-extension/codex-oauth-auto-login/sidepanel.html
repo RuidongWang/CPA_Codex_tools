@@ -24,11 +24,80 @@
         <p id="message">打开本地 CPA 页面后读取账号池。</p>
       </section>
 
+      <section class="settings-section" aria-label="自动化参数">
+        <div class="section-title">
+          <h2>自动化参数</h2>
+          <span id="settings-state" class="meta">读取中</span>
+        </div>
+        <div class="settings-grid">
+          <label class="setting-field" for="setting-step-wait">
+            <span>每步等待(秒)</span>
+            <input id="setting-step-wait" type="number" min="1" max="60" step="0.5" inputmode="decimal">
+          </label>
+          <label class="setting-field" for="setting-click-timeout">
+            <span>点击超时(秒)</span>
+            <input id="setting-click-timeout" type="number" min="1" max="60" step="0.5" inputmode="decimal">
+          </label>
+          <label class="setting-field" for="setting-job-timeout">
+            <span>任务超时(秒)</span>
+            <input id="setting-job-timeout" type="number" min="30" max="1800" step="1" inputmode="numeric">
+          </label>
+          <label class="setting-field" for="setting-skip-delay">
+            <span>跳过等待(秒)</span>
+            <input id="setting-skip-delay" type="number" min="0" max="600" step="1" inputmode="numeric">
+          </label>
+          <label class="setting-field" for="setting-between-jobs-delay">
+            <span>任务间隔(秒)</span>
+            <input id="setting-between-jobs-delay" type="number" min="0" max="600" step="1" inputmode="numeric">
+          </label>
+        </div>
+        <div class="settings-actions">
+          <button id="save-settings" type="button">保存参数</button>
+          <button id="reset-settings" type="button" class="secondary">恢复默认</button>
+        </div>
+      </section>
+
       <div class="actions">
         <button id="read-pools" type="button">读取账号池</button>
-        <button id="start" type="button">开始登录</button>
-        <button id="stop" type="button" class="secondary">停止</button>
+        <button id="build-queue" type="button">生成/刷新队列</button>
+        <button id="start-batch" type="button">开始全部</button>
+        <button id="pause-batch" type="button" class="secondary">暂停</button>
+        <button id="resume-batch" type="button" class="secondary">继续</button>
+        <button id="stop-batch" type="button" class="danger">停止</button>
       </div>
+
+      <section class="queue-section" aria-label="队列状态">
+        <div class="section-title">
+          <h2>队列状态</h2>
+          <span id="queue-total" class="meta">0 total</span>
+        </div>
+        <div id="queue-stats" class="queue-stats"></div>
+      </section>
+
+      <section class="queue-section" aria-label="当前任务">
+        <div class="section-title">
+          <h2>当前任务</h2>
+        </div>
+        <dl id="current-job" class="detail-list"></dl>
+      </section>
+
+      <section class="error-section" aria-label="最近错误">
+        <div class="section-title">
+          <h2>最近错误</h2>
+        </div>
+        <div id="recent-errors" class="error-list">
+          <p class="empty">暂无错误</p>
+        </div>
+      </section>
+
+      <section class="operation-log-section" aria-label="操作日志">
+        <div class="section-title">
+          <h2>操作日志</h2>
+        </div>
+        <div id="operation-log" class="operation-log-list">
+          <p class="empty">暂无操作日志</p>
+        </div>
+      </section>
 
       <section class="pool-summary">
         <div>

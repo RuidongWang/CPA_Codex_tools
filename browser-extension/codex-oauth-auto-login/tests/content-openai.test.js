@@ -62,6 +62,7 @@ function element(tagName, attrs = {}, textContent = '', children = []) {
     style: attrs.style || {},
     clicked: false,
     focused: false,
+    events: [],
     getAttribute(name) {
       return this.attributes[name] ?? null;
     },
@@ -85,9 +86,15 @@ function element(tagName, attrs = {}, textContent = '', children = []) {
     },
     click() {
       this.clicked = true;
+      const type = String(this.getAttribute('type') || '').toLowerCase();
+      if (type === 'submit' && this.form?.requestSubmit) {
+        this.form.requestSubmit(this);
+      }
     },
     dispatchEvent(event) {
+      this.events.push(event.type);
       this.lastEvent = event.type;
+      this.onDispatch?.(event);
       return true;
     },
   };
@@ -138,6 +145,51 @@ test('classifies email state and fills email input', () => {
   assert.equal(helpers.readEmailValue(fakeDoc), 'user@example.com');
 });
 
+test('fills email and submits an unlabeled continue button in one action', async () => {
+  const email = element('input', { type: 'email', name: 'email' });
+  const submit = element('button', { type: 'submit', 'aria-label': '' }, '');
+  const loginForm = form();
+  submit.form = loginForm;
+  const fakeDoc = doc([email, submit], 'Welcome back Email address');
+
+  const result = await helpers.fillEmailAndContinue(fakeDoc, 'user@example.com');
+
+  assert.equal(result.ok, true);
+  assert.equal(email.value, 'user@example.com');
+  assert.equal(result.continueClicked, true);
+  assert.equal(loginForm.submitted, true);
+  assert.equal(loginForm.submitter, submit);
+});
+
+test('fills email, waits for delayed Chinese continue button, and clicks it', async () => {
+  const email = element('input', { type: 'text', placeholder: '电子邮件地址' });
+  const continueButton = element('button', { type: 'submit', disabled: true }, '继续');
+  const loginForm = form();
+  continueButton.form = loginForm;
+  email.onDispatch = (event) => {
+    if (event.type === 'input') {
+      setTimeout(() => {
+        continueButton.disabled = false;
+        delete continueButton.attributes.disabled;
+      }, 5);
+    }
+  };
+  const fakeDoc = doc([email, continueButton], '欢迎回来');
+
+  const result = await helpers.fillEmailAndContinue(fakeDoc, 'user@example.com', {
+    actionSettleMs: 0,
+    actionTimeoutMs: 80,
+    pollMs: 1,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(email.value, 'user@example.com');
+  assert.equal(result.continueClicked, true);
+  assert.equal(result.continueResult.mode, 'requestSubmit');
+  assert.equal(continueButton.clicked, false);
+  assert.equal(loginForm.submitted, true);
+});
+
 test('classifies Chinese email page and clicks continue', () => {
   const email = element('input', { type: 'text', placeholder: '电子邮件地址' });
   const continueButton = element('button', {}, '继续');
@@ -155,9 +207,19 @@ test('classifies Chinese email page and clicks continue', () => {
   assert.equal(continueButton.clicked, true);
 });
 
+test('treats elements without inline opacity as visible', () => {
+  const continueButton = element('button', { style: { opacity: '' } }, '继续');
+  const fakeDoc = doc([continueButton], '欢迎回来');
+
+  assert.equal(helpers.isVisibleElement(continueButton, fakeDoc), true);
+  assert.equal(helpers.findLikelyAction(fakeDoc, ['继续']), continueButton);
+});
+
 test('classifies OpenAI Chinese welcome page generic text input as email and clicks submit', () => {
   const email = element('input', { type: 'text' });
   const submit = element('button', { type: 'submit' }, '继续');
+  const loginForm = form();
+  submit.form = loginForm;
   const fakeDoc = doc([email, submit], '欢迎回来');
 
   const state = helpers.classifyAuthState(fakeDoc);
@@ -169,8 +231,10 @@ test('classifies OpenAI Chinese welcome page generic text input as email and cli
 
   const clickResult = helpers.clickLikelyAction(fakeDoc);
   assert.equal(clickResult.ok, true);
-  assert.equal(clickResult.mode, 'click');
-  assert.equal(submit.clicked, true);
+  assert.equal(clickResult.mode, 'requestSubmit');
+  assert.equal(submit.clicked, false);
+  assert.equal(loginForm.submitted, true);
+  assert.equal(loginForm.submitter, submit);
 });
 
 test('classifies focused Chinese OpenAI email input with adjacent label and hidden decoys', () => {
@@ -184,7 +248,9 @@ test('classifies focused Chinese OpenAI email input with adjacent label and hidd
   const csrf = element('input', { type: 'hidden', name: 'csrf' });
   const rememberDevice = element('input', { type: 'checkbox', name: 'remember-device' });
   const password = element('input', { type: 'password' });
-  const continueButton = element('button', {}, '继续');
+  const continueButton = element('button', { type: 'submit' }, '继续');
+  const loginForm = form();
+  continueButton.form = loginForm;
   const fakeDoc = doc(
     [field, hiddenRegion, hiddenCode, csrf, rememberDevice, password, continueButton],
     '欢迎回来 电子邮件地址 继续'
@@ -203,8 +269,10 @@ test('classifies focused Chinese OpenAI email input with adjacent label and hidd
 
   const clickResult = helpers.clickLikelyAction(fakeDoc);
   assert.equal(clickResult.ok, true);
-  assert.equal(clickResult.mode, 'click');
-  assert.equal(continueButton.clicked, true);
+  assert.equal(clickResult.mode, 'requestSubmit');
+  assert.equal(continueButton.clicked, false);
+  assert.equal(loginForm.submitted, true);
+  assert.equal(loginForm.submitter, continueButton);
 });
 
 test('classifies focused email input even when browser reports zero layout during hydration', () => {
@@ -284,16 +352,146 @@ test('fills split verification code inputs one digit at a time', () => {
   assert.deepEqual(digits.map((input) => input.value), ['2', '4', '6', '8', '1', '0']);
 });
 
+test('classifies Chinese password page as one-time-code choice and clicks it', () => {
+  const password = element('input', { type: 'password', name: 'password' });
+  const useCode = element('button', {}, '使用一次性验证码登录');
+  const fakeDoc = doc(
+    [password, useCode],
+    '输入密码 电子邮件地址 user@example.com 密码 忘记了密码？ 使用一次性验证码登录'
+  );
+
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'otp_choice',
+    reason: 'one_time_code_action',
+    email: 'user@example.com',
+  });
+
+  const result = helpers.clickLikelyAction(fakeDoc, helpers.OTP_LOGIN_WORDS);
+  assert.equal(result.ok, true);
+  assert.equal(useCode.clicked, true);
+});
+
+test('classifies password input with one-time-code action as choice when body omits password label', () => {
+  const password = element('input', { type: 'password', name: 'password' });
+  const useCode = element('button', {}, '使用一次性验证码登录');
+  const fakeDoc = doc(
+    [password, useCode],
+    '电子邮件地址 user@example.com 使用一次性验证码登录'
+  );
+
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'otp_choice',
+    reason: 'one_time_code_action',
+    email: 'user@example.com',
+  });
+});
+
+test('reports action center coordinates for trusted browser clicks', async () => {
+  const continueButton = element('button', {}, '继续');
+  continueButton.getBoundingClientRect = () => ({
+    left: 40,
+    top: 80,
+    width: 120,
+    height: 32,
+    right: 160,
+    bottom: 112,
+  });
+  const fakeDoc = doc([continueButton], '欢迎回来');
+
+  const result = await helpers.getLikelyActionRectWhenReady(fakeDoc, ['继续'], {
+    actionSettleMs: 0,
+    actionTimeoutMs: 10,
+  });
+
+  assert.deepEqual(result, {
+    ok: true,
+    text: '继续',
+    rect: {
+      left: 40,
+      top: 80,
+      width: 120,
+      height: 32,
+      right: 160,
+      bottom: 112,
+      centerX: 100,
+      centerY: 96,
+    },
+  });
+});
+
+test('fills verification code and clicks Chinese continue in one action', async () => {
+  const code = element('input', { autocomplete: 'one-time-code', inputmode: 'numeric' });
+  const continueButton = element('button', {}, '继续');
+  const fakeDoc = doc([code, continueButton], '检查你的收件箱 输入验证码 继续');
+
+  const result = await helpers.fillVerificationCodeAndContinue(fakeDoc, '157526');
+
+  assert.equal(result.ok, true);
+  assert.equal(code.value, '157526');
+  assert.equal(result.continueClicked, true);
+  assert.equal(continueButton.clicked, true);
+});
+
 test('classifies consent state and clicks authorize-like action', () => {
   const authorize = element('button', {}, 'Authorize');
-  const fakeDoc = doc([authorize], 'Allow Codex to access your OpenAI account');
+  const fakeDoc = doc([authorize], 'Allow Codex to access your OpenAI account for user@example.com');
 
   const state = helpers.classifyAuthState(fakeDoc);
   assert.equal(state.state, 'consent');
+  assert.equal(state.email, 'user@example.com');
 
   const result = helpers.clickLikelyAction(fakeDoc, ['authorize', 'allow']);
   assert.equal(result.ok, true);
   assert.equal(authorize.clicked, true);
+});
+
+test('reads account email from consent page body text', () => {
+  const authorize = element('button', {}, 'Authorize');
+  const message = element('p', {}, 'Authorize Codex for user@example.com');
+  const main = element('main', {}, '', [message, authorize]);
+  const fakeDoc = doc([main]);
+
+  assert.equal(helpers.readEmailValue(fakeDoc), 'user@example.com');
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'consent',
+    reason: 'authorize_action',
+    email: 'user@example.com',
+  });
+});
+
+test('classifies continue-as account page and reads account email from action text', () => {
+  const continueAs = element('button', {}, 'Continue as other@example.com');
+  const fakeDoc = doc([continueAs], 'Choose an account');
+
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'account',
+    reason: 'continue_as_account',
+    email: 'other@example.com',
+  });
+  assert.equal(helpers.readEmailValue(fakeDoc), 'other@example.com');
+});
+
+test('classifies Chinese continue-as account page and reads account email from page text', () => {
+  const continueAs = element('button', {}, '继续');
+  const fakeDoc = doc([continueAs], '继续使用 other@example.com');
+
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'account',
+    reason: 'continue_as_account',
+    email: 'other@example.com',
+  });
+});
+
+test('reports missing consent email for strict background verification', () => {
+  const authorize = element('button', {}, 'Authorize');
+  const fakeDoc = doc([authorize], 'Allow Codex to access your OpenAI account');
+
+  assert.deepEqual(helpers.classifyAuthState(fakeDoc), {
+    state: 'consent',
+    reason: 'authorize_action',
+    email: '',
+  });
+  assert.equal(helpers.readEmailValue(fakeDoc), '');
 });
 
 test('classifies CAPTCHA, MFA, phone, and security pages as manual required', () => {
@@ -307,6 +505,28 @@ test('classifies CAPTCHA, MFA, phone, and security pages as manual required', ()
   }
 });
 
+test('classifies account deactivated error pages with a skip reason', () => {
+  assert.deepEqual(
+    helpers.classifyAuthState(doc([], '糟糕，出错了！验证过程中出错 (account_deactivated)。请重试。')),
+    {
+      state: 'manual_required',
+      reason: 'account_deactivated',
+    },
+  );
+});
+
 test('unknown state is reported when no known controls are present', () => {
   assert.equal(helpers.classifyAuthState(doc([], 'Welcome')).state, 'unknown');
+});
+
+test('click action obeys requested words instead of clicking an unmatched submit', () => {
+  const submit = element('button', { type: 'submit' }, 'Submit');
+  const loginForm = form();
+  submit.form = loginForm;
+  const fakeDoc = doc([submit], 'Continue as other@example.com');
+
+  const result = helpers.clickLikelyAction(fakeDoc, ['continue', 'next']);
+  assert.deepEqual(result, { ok: false, error: 'action_not_found' });
+  assert.equal(submit.clicked, false);
+  assert.equal(loginForm.submitted, false);
 });

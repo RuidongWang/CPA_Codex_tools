@@ -26,9 +26,40 @@
     '允许',
     '确认',
   ];
+  const ACCOUNT_ACTION_WORDS = [
+    'continue as',
+    'continue with',
+    'sign in as',
+    '继续使用',
+    '继续以',
+    'continue',
+    '继续',
+  ];
+  const OTP_LOGIN_WORDS = [
+    'log in with a one-time code',
+    'login with a one-time code',
+    'sign in with a one-time code',
+    'use a one-time code',
+    'use one-time code',
+    'email me a code',
+    'send code by email',
+    'send a code',
+    '使用一次性验证码登录',
+    '使用验证码登录',
+    '使用一次性代码登录',
+    '通过电子邮件发送代码',
+    '通过邮箱发送验证码',
+  ];
   const MANUAL_REQUIRED_PATTERN = /captcha|cloudflare|mfa|multi[-\s]?factor|authenticator|security\s+check|suspicious|passkey|we need to verify|verify\s+(?:your\s+)?phone|phone\s+(?:number\s+)?verification|安全检查|身份验证器|可疑|通行密钥|多重验证|双重验证|验证.*(?:手机|电话)|(?:手机|电话).*验证/i;
-  const VERIFICATION_PATTERN = /verification\s+code|one[-\s]?time\s+code|enter\s+the\s+code|check\s+your\s+email|sent\s+to\s+your\s+email|验证码|一次性代码|输入代码|检查你的邮箱|发送到你的邮箱|发送至你的电子邮件/i;
+  const ACCOUNT_DEACTIVATED_PATTERN = /account[_\s-]*deactivated|account\s+(?:has\s+been\s+)?(?:deactivated|disabled)|(?:账号|账户).*(?:停用|禁用|已停用|已禁用)/i;
+  const VERIFICATION_PATTERN = /verification\s+code|one[-\s]?time\s+code|enter\s+the\s+code|check\s+your\s+(?:email|inbox)|sent\s+to\s+your\s+email|验证码|一次性代码|输入代码|检查你的邮箱|检查你的收件箱|检查收件箱|查看收件箱|输入验证码|发送到你的邮箱|发送至你的电子邮件/i;
+  const PASSWORD_PATTERN = /password|enter\s+password|forgot\s+(?:your\s+)?password|输入密码|密码|忘记了密码/i;
   const CONSENT_PATTERN = /authorize|authorise|allow|grant|consent|access\s+your\s+openai\s+account|codex|授权|允许|同意|确认|访问你的\s*openai\s*账户/i;
+  const ACCOUNT_PAGE_PATTERN = /continue\s+(?:as|with)|sign\s+in\s+as|signed\s+in\s+as|logged\s+in\s+as|继续使用|继续以|使用[\s\S]{0,120}继续|以[\s\S]{0,120}继续/i;
+  const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+  const ACTION_SELECTOR = 'button, [role="button"], a, input[type="submit"], input[type="button"]';
+  const DEFAULT_ACTION_TIMEOUT_MS = 5000;
+  const DEFAULT_ACTION_POLL_MS = 150;
 
   function getDocument(doc) {
     return doc || (typeof document !== 'undefined' ? document : null);
@@ -48,6 +79,19 @@
   function getPageText(doc) {
     const currentDoc = getDocument(doc);
     return String(currentDoc?.body?.innerText || currentDoc?.body?.textContent || '');
+  }
+
+  function readEmailFromText(value) {
+    const match = String(value || '').match(EMAIL_PATTERN);
+    return match ? match[0] : '';
+  }
+
+  function readAccountEmailFromText(value) {
+    const text = String(value || '');
+    if (!ACCOUNT_PAGE_PATTERN.test(text)) {
+      return '';
+    }
+    return readEmailFromText(text);
   }
 
   function queryAll(doc, selector) {
@@ -127,7 +171,12 @@
       }
     }
     const style = element.style || {};
-    if (style.display === 'none' || style.visibility === 'hidden' || (!active && Number(style.opacity) === 0)) {
+    const inlineOpacity = String(style.opacity ?? '').trim();
+    if (
+      style.display === 'none'
+      || style.visibility === 'hidden'
+      || (!active && inlineOpacity !== '' && Number(inlineOpacity) === 0)
+    ) {
       return false;
     }
     return true;
@@ -199,6 +248,14 @@
 
   function isHiddenInput(input) {
     return String(input?.getAttribute?.('type') || input?.type || '').trim().toLowerCase() === 'hidden';
+  }
+
+  function isPasswordInput(input) {
+    return String(input?.getAttribute?.('type') || input?.type || '').trim().toLowerCase() === 'password';
+  }
+
+  function findPasswordInput(doc) {
+    return queryAll(doc, 'input').find((input) => isVisibleElement(input, doc) && isPasswordInput(input)) || null;
   }
 
   function hasEmailPageHint(pageText) {
@@ -315,20 +372,44 @@
     return inputs.length >= 4 ? inputs : [];
   }
 
-  function findLikelyAction(doc, words = ACTION_WORDS) {
-    const directSubmit = queryAll(doc, 'button[type="submit"], input[type="submit"]').find((element) => (
+  function getActionCandidates(doc) {
+    return queryAll(doc, ACTION_SELECTOR).filter((element) => (
       isVisibleElement(element, doc) && isActionEnabled(element)
     ));
-    if (directSubmit) {
-      return directSubmit;
+  }
+
+  function normalizeActionWords(words) {
+    const requestedWords = Array.isArray(words)
+      ? words
+      : (typeof words === 'string' ? [words] : ACTION_WORDS);
+    return requestedWords
+      .map((word) => String(word || '').trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  function isSubmitControl(element) {
+    const type = String(element?.getAttribute?.('type') || element?.type || '').trim().toLowerCase();
+    return type === 'submit';
+  }
+
+  function findLikelyAction(doc, words = ACTION_WORDS, options = {}) {
+    const candidates = getActionCandidates(doc);
+    const normalizedWords = normalizeActionWords(words);
+    for (const word of normalizedWords) {
+      const match = candidates.find((element) => getElementText(element).toLowerCase().includes(word));
+      if (match) {
+        return match;
+      }
     }
 
-    const normalizedWords = words.map((word) => String(word).toLowerCase());
-    return queryAll(doc, 'button, [role="button"], a').find((element) => {
-      if (!isVisibleElement(element, doc) || !isActionEnabled(element)) return false;
-      const text = getElementText(element).toLowerCase();
-      return normalizedWords.some((word) => text.includes(word));
-    }) || null;
+    if (options.allowSubmitFallback) {
+      return candidates.find(isSubmitControl) || null;
+    }
+    return null;
+  }
+
+  function findOtpLoginAction(doc) {
+    return findLikelyAction(doc, OTP_LOGIN_WORDS);
   }
 
   function isActionEnabled(element) {
@@ -337,10 +418,42 @@
       && element.getAttribute?.('aria-disabled') !== 'true';
   }
 
+  function toNonNegativeMs(value, fallback) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return fallback;
+    }
+    return Math.max(0, Math.trunc(number));
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+  }
+
+  async function waitForLikelyAction(doc, words = ACTION_WORDS, options = {}) {
+    const timeoutMs = toNonNegativeMs(options.actionTimeoutMs, DEFAULT_ACTION_TIMEOUT_MS);
+    const pollMs = Math.max(1, toNonNegativeMs(options.pollMs, DEFAULT_ACTION_POLL_MS));
+    const startedAt = Date.now();
+    let action = findLikelyAction(doc, words, options);
+    while (!action && Date.now() - startedAt < timeoutMs) {
+      await sleep(pollMs);
+      action = findLikelyAction(doc, words, options);
+    }
+    return action;
+  }
+
   function classifyAuthState(doc) {
     const pageText = getPageText(doc);
+    if (ACCOUNT_DEACTIVATED_PATTERN.test(pageText)) {
+      return { state: 'manual_required', reason: 'account_deactivated' };
+    }
     if (MANUAL_REQUIRED_PATTERN.test(pageText)) {
       return { state: 'manual_required', reason: 'security_or_extra_verification' };
+    }
+
+    const otpLoginAction = findOtpLoginAction(doc);
+    if (otpLoginAction && (findPasswordInput(doc) || PASSWORD_PATTERN.test(`${pageText} ${getElementText(otpLoginAction)}`))) {
+      return { state: 'otp_choice', reason: 'one_time_code_action', email: readEmailValue(doc) };
     }
 
     const codeInput = findCodeInput(doc);
@@ -353,9 +466,14 @@
       return { state: 'email', reason: 'email_input', email: readEmailValue(doc) };
     }
 
+    const accountEmail = readAccountPageEmail(doc);
+    if (accountEmail) {
+      return { state: 'account', reason: 'continue_as_account', email: accountEmail };
+    }
+
     const action = findLikelyAction(doc, ['authorize', 'authorise', 'allow', 'continue', 'confirm', '授权', '允许', '同意', '继续', '确认']);
     if (action && CONSENT_PATTERN.test(`${pageText} ${getElementText(action)}`)) {
-      return { state: 'consent', reason: 'authorize_action' };
+      return { state: 'consent', reason: 'authorize_action', email: readEmailValue(doc) };
     }
 
     return { state: 'unknown', reason: 'no_known_controls' };
@@ -367,9 +485,50 @@
     if (value && value.includes('@')) {
       return value;
     }
-    const text = getPageText(doc);
-    const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-    return match ? match[0] : '';
+    const candidates = [];
+    const accountEmail = readAccountPageEmail(doc);
+    if (accountEmail) {
+      candidates.push(accountEmail);
+    }
+    const pageEmail = readEmailFromText(getPageText(doc));
+    if (pageEmail) {
+      candidates.push(pageEmail);
+    }
+    for (const element of queryAll(doc, 'main, [role="main"], article, section, form, p, span, div')) {
+      if (!isVisibleElement(element, doc)) {
+        continue;
+      }
+      const elementEmail = readEmailFromText(getElementText(element));
+      if (elementEmail) {
+        candidates.push(elementEmail);
+      }
+    }
+    return candidates.sort((left, right) => left.length - right.length)[0] || '';
+  }
+
+  function readAccountPageEmail(doc) {
+    for (const element of getActionCandidates(doc)) {
+      const accountEmail = readAccountEmailFromText(getElementText(element));
+      if (accountEmail) {
+        return accountEmail;
+      }
+    }
+
+    const pageEmail = readAccountEmailFromText(getPageText(doc));
+    if (pageEmail) {
+      return pageEmail;
+    }
+
+    for (const element of queryAll(doc, 'main, [role="main"], article, section, form, p, span, div')) {
+      if (!isVisibleElement(element, doc)) {
+        continue;
+      }
+      const accountEmail = readAccountEmailFromText(getElementText(element));
+      if (accountEmail) {
+        return accountEmail;
+      }
+    }
+    return '';
   }
 
   function setInputValue(input, value) {
@@ -401,6 +560,25 @@
     return { ok: true, email: String(email || '') };
   }
 
+  async function fillEmailAndContinue(doc, email, options = {}) {
+    const fillResult = fillEmail(doc, email);
+    if (!fillResult.ok) {
+      return { ...fillResult, continueClicked: false };
+    }
+
+    const continueResult = await clickLikelyActionWhenReady(
+      doc,
+      ['continue', 'next', 'sign in', 'log in', '继续', '下一步', '登录', '登入'],
+      { ...options, allowSubmitFallback: true }
+    );
+
+    return {
+      ...fillResult,
+      continueClicked: Boolean(continueResult.ok),
+      continueResult,
+    };
+  }
+
   function fillVerificationCode(doc, code) {
     const value = String(code || '').trim();
     const splitInputs = findSplitCodeInputs(doc);
@@ -419,18 +597,172 @@
     return { ok: true, mode: 'single' };
   }
 
-  function clickLikelyAction(doc, words = ACTION_WORDS) {
-    const action = findLikelyAction(doc, words);
+  async function fillVerificationCodeAndContinue(doc, code, options = {}) {
+    const fillResult = fillVerificationCode(doc, code);
+    if (!fillResult.ok) {
+      return { ...fillResult, continueClicked: false };
+    }
+
+    const continueResult = await clickLikelyActionWhenReady(
+      doc,
+      ['continue', 'submit', 'verify', 'next', '继续', '提交', '验证', '下一步'],
+      { ...options, allowSubmitFallback: true }
+    );
+
+    return {
+      ...fillResult,
+      continueClicked: Boolean(continueResult.ok),
+      continueResult,
+    };
+  }
+
+  function createDomEvent(type, EventCtor, options = {}) {
+    const Ctor = EventCtor || root.Event || function Event(eventType) { this.type = eventType; };
+    try {
+      return new Ctor(type, options);
+    } catch {
+      return { type };
+    }
+  }
+
+  function prepareActionForClick(action) {
+    try {
+      action.scrollIntoView?.({ behavior: 'auto', block: 'center', inline: 'center' });
+    } catch {
+      try {
+        action.scrollIntoView?.();
+      } catch {}
+    }
+    try {
+      action.focus?.();
+    } catch {}
+  }
+
+  function dispatchPointerMousePrelude(action) {
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      view: root,
+      button: 0,
+      buttons: 1,
+    };
+    for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+      const EventCtor = type.startsWith('pointer') ? root.PointerEvent : root.MouseEvent;
+      action.dispatchEvent?.(createDomEvent(type, EventCtor, eventInit));
+    }
+  }
+
+  function requestSubmitAction(form, action) {
+    if (!form || typeof form.requestSubmit !== 'function') {
+      return null;
+    }
+
+    try {
+      form.requestSubmit(action.form === form ? action : undefined);
+      return { ok: true, text: getElementText(action), mode: 'requestSubmit' };
+    } catch {
+      try {
+        form.requestSubmit();
+        return { ok: true, text: getElementText(action), mode: 'requestSubmit' };
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  function clickActionElement(action) {
     if (!action) {
       return { ok: false, error: 'action_not_found' };
     }
     const form = action.form || action.closest?.('form') || null;
+    prepareActionForClick(action);
+    dispatchPointerMousePrelude(action);
     if (form && typeof form.requestSubmit === 'function') {
-      form.requestSubmit(action.form === form ? action : undefined);
-      return { ok: true, text: getElementText(action), mode: 'requestSubmit' };
+      const submitResult = requestSubmitAction(form, action);
+      if (submitResult) {
+        return submitResult;
+      }
     }
-    action.click?.();
-    return { ok: true, text: getElementText(action), mode: 'click' };
+    if (typeof action.click === 'function') {
+      action.click();
+      return { ok: true, text: getElementText(action), mode: 'click' };
+    }
+    action.dispatchEvent?.(createDomEvent('click', root.MouseEvent, {
+      bubbles: true,
+      cancelable: true,
+      view: root,
+      button: 0,
+      buttons: 1,
+    }));
+    return { ok: true, text: getElementText(action), mode: 'dispatchClick' };
+  }
+
+  function finiteNumber(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function getActionRect(action) {
+    if (!action) {
+      return { ok: false, error: 'action_not_found' };
+    }
+    const text = getElementText(action);
+    if (typeof action.getBoundingClientRect !== 'function') {
+      return { ok: false, error: 'action_rect_unavailable', text };
+    }
+
+    prepareActionForClick(action);
+    const rect = action.getBoundingClientRect();
+    const left = finiteNumber(rect?.left, finiteNumber(rect?.x));
+    const top = finiteNumber(rect?.top, finiteNumber(rect?.y));
+    const width = finiteNumber(rect?.width, finiteNumber(rect?.right) - left);
+    const height = finiteNumber(rect?.height, finiteNumber(rect?.bottom) - top);
+    const right = finiteNumber(rect?.right, left + width);
+    const bottom = finiteNumber(rect?.bottom, top + height);
+    if (!(width > 0 && height > 0)) {
+      return { ok: false, error: 'action_rect_empty', text };
+    }
+    return {
+      ok: true,
+      text,
+      rect: {
+        left,
+        top,
+        width,
+        height,
+        right,
+        bottom,
+        centerX: left + (width / 2),
+        centerY: top + (height / 2),
+      },
+    };
+  }
+
+  function clickLikelyAction(doc, words = ACTION_WORDS, options = {}) {
+    return clickActionElement(findLikelyAction(doc, words, options));
+  }
+
+  async function clickLikelyActionWhenReady(doc, words = ACTION_WORDS, options = {}) {
+    const settleMs = toNonNegativeMs(options.actionSettleMs, 0);
+    if (settleMs) {
+      await sleep(settleMs);
+    }
+    return clickActionElement(await waitForLikelyAction(doc, words, options));
+  }
+
+  async function getLikelyActionRectWhenReady(doc, words = ACTION_WORDS, options = {}) {
+    const settleMs = toNonNegativeMs(options.actionSettleMs, 0);
+    if (settleMs) {
+      await sleep(settleMs);
+    }
+    return getActionRect(await waitForLikelyAction(doc, words, options));
+  }
+
+  function sendAsync(sendResponse, task) {
+    Promise.resolve(task)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+    return true;
   }
 
   function publicState(state) {
@@ -477,6 +809,9 @@
           sendResponse(fillEmail(null, message.email));
           return false;
         }
+        if (message.action === 'FILL_EMAIL_AND_CONTINUE') {
+          return sendAsync(sendResponse, fillEmailAndContinue(null, message.email, message));
+        }
         if (message.action === 'READ_EMAIL') {
           sendResponse({ ok: true, result: { email: readEmailValue() } });
           return false;
@@ -485,9 +820,24 @@
           sendResponse(fillVerificationCode(null, message.code));
           return false;
         }
+        if (message.action === 'FILL_CODE_AND_CONTINUE') {
+          return sendAsync(sendResponse, fillVerificationCodeAndContinue(null, message.code, message));
+        }
         if (message.action === 'CLICK_ACTION') {
-          sendResponse(clickLikelyAction(null, message.words));
-          return false;
+          return sendAsync(sendResponse, clickLikelyActionWhenReady(null, message.words, {
+            allowSubmitFallback: Boolean(message.allowSubmitFallback),
+            actionSettleMs: message.actionSettleMs,
+            actionTimeoutMs: message.actionTimeoutMs,
+            pollMs: message.pollMs,
+          }));
+        }
+        if (message.action === 'GET_ACTION_RECT') {
+          return sendAsync(sendResponse, getLikelyActionRectWhenReady(null, message.words, {
+            allowSubmitFallback: Boolean(message.allowSubmitFallback),
+            actionSettleMs: message.actionSettleMs,
+            actionTimeoutMs: message.actionTimeoutMs,
+            pollMs: message.pollMs,
+          }));
         }
         sendResponse({ ok: false, error: 'unknown_action' });
       } catch (error) {
@@ -499,17 +849,26 @@
 
   return {
     ACTION_WORDS,
+    ACCOUNT_ACTION_WORDS,
+    OTP_LOGIN_WORDS,
     classifyAuthState,
     clickLikelyAction,
     fillEmail,
+    fillEmailAndContinue,
     fillVerificationCode,
+    fillVerificationCodeAndContinue,
+    findPasswordInput,
     findCodeInput,
     findEmailInput,
     findSplitCodeInputs,
     findLikelyAction,
+    findOtpLoginAction,
+    getActionRect,
+    getLikelyActionRectWhenReady,
     getPageText,
     getOpenAIDiagnostics,
     isVisibleElement,
+    readAccountPageEmail,
     readEmailValue,
   };
 });

@@ -191,32 +191,32 @@ export function KeeperPanel(props: KeeperPanelProps) {
       </section>
       <div className="keeper-panel__stats">
         <span>
+          <span className="keeper-panel__stat-label">总计</span>
           <strong>{summary?.total ?? 0}</strong>
-          总计
         </span>
         <span>
+          <span className="keeper-panel__stat-label">删除</span>
           <strong>{summary?.dead ?? 0}</strong>
-          删除
         </span>
         <span>
+          <span className="keeper-panel__stat-label">禁用</span>
           <strong>{summary?.disabled ?? 0}</strong>
-          禁用
         </span>
         <span>
+          <span className="keeper-panel__stat-label">启用</span>
           <strong>{summary?.enabled ?? 0}</strong>
-          启用
         </span>
         <span>
+          <span className="keeper-panel__stat-label">刷新</span>
           <strong>{summary?.refreshed ?? 0}</strong>
-          刷新
         </span>
         <span>
+          <span className="keeper-panel__stat-label">刷新候选</span>
           <strong>{summary?.refresh_candidates ?? 0}</strong>
-          刷新候选
         </span>
         <span>
+          <span className="keeper-panel__stat-label">跳过/异常</span>
           <strong>{(summary?.skipped ?? 0) + (summary?.errors ?? 0)}</strong>
-          跳过/异常
         </span>
       </div>
       {rows.length ? (
