@@ -90,6 +90,7 @@ function makeSettings(overrides: Partial<OAuthSettings> = {}): OAuthSettings {
     hotmailHelperUrl: "http://127.0.0.1:17373",
     hotmailAccounts: [makeHotmail()],
     rememberHotmailTokens: false,
+    importedInvalidAccountEmails: [],
     ...overrides,
   };
 }
@@ -183,8 +184,10 @@ describe("CodexOAuthBridge", () => {
         makeAccount({ email: "alice@hotmail.com", auth_index: "idx-a" }),
         makeAccount({ email: "healthy@hotmail.com", auth_index: "idx-healthy", status: "healthy", error: "", last_query_at: null }),
         makeAccount({ email: "keeper@hotmail.com", auth_index: "idx-keeper", status: "healthy", error: "", last_query_at: null }),
+        makeAccount({ email: "imported@hotmail.com", auth_index: "idx-imported", status: "healthy", error: "", last_query_at: null }),
       ],
       keeperRefreshFailureAuthIndexes: ["idx-keeper"],
+      importedInvalidAccountEmails: ["IMPORTED@hotmail.com"],
       settings: makeSettings({
         hotmailAccounts: [
           makeHotmail({
@@ -211,10 +214,11 @@ describe("CodexOAuthBridge", () => {
     expect(pools.ok).toBe(true);
     expect(pools.result).toEqual(
       expect.objectContaining({
-        counts: { invalidAccounts: 2, hotmailAccounts: 1 },
+        counts: { invalidAccounts: 3, hotmailAccounts: 1 },
         invalidAccounts: [
           expect.objectContaining({ email: "alice@hotmail.com", authIndex: "idx-a", reason: "Token 失效" }),
           expect.objectContaining({ email: "keeper@hotmail.com", authIndex: "idx-keeper", reason: "Keeper 刷新失败" }),
+          expect.objectContaining({ email: "imported@hotmail.com", authIndex: "idx-imported", reason: "失效账号" }),
         ],
         hotmailAccounts: [
           {

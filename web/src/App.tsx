@@ -973,6 +973,23 @@ export default function App() {
     }
   }
 
+  async function handleImportedInvalidAccountEmailsChange(importedInvalidAccountEmails: string[]) {
+    const nextConfig = {
+      ...effectiveConfig,
+      oauthSettings: {
+        ...effectiveConfig.oauthSettings,
+        importedInvalidAccountEmails,
+      },
+    };
+    setConfig(nextConfig);
+    try {
+      await persistRuntimeConfig(nextConfig);
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "保存失效账号导入列表失败"));
+    }
+  }
+
   function replaceOAuthQueueJobs(jobs: OAuthJob[]) {
     setOAuthQueueJobs(jobs);
   }
@@ -997,6 +1014,7 @@ export default function App() {
       accounts: allItems,
       hotmailAccounts: effectiveConfig.oauthSettings.hotmailAccounts,
       keeperRefreshFailureAuthIndexes,
+      importedInvalidAccountEmails: effectiveConfig.oauthSettings.importedInvalidAccountEmails,
       scope: buildOAuthQueueScope(kind),
       now: new Date().toISOString(),
     });
@@ -1628,6 +1646,7 @@ export default function App() {
         selectedAuthIndexes={selectedAuthIndexes}
         filteredAuthIndexes={filteredAuthIndexes}
         keeperRefreshFailureAuthIndexes={keeperRefreshFailureAuthIndexes}
+        importedInvalidAccountEmails={effectiveConfig.oauthSettings.importedInvalidAccountEmails}
         onQueueJobsChange={replaceOAuthQueueJobs}
         onSettingsChange={handleSaveOAuthSettings}
         onStartOAuth={() => startCodexOAuth(effectiveConfig)}
@@ -1884,6 +1903,8 @@ export default function App() {
             }
             onCheckLoginQuota={handleOAuthLoginQuotaCheck}
             keeperRefreshFailureAuthIndexes={keeperRefreshFailureAuthIndexes}
+            importedInvalidAccountEmails={effectiveConfig.oauthSettings.importedInvalidAccountEmails}
+            onImportedInvalidAccountEmailsChange={handleImportedInvalidAccountEmailsChange}
             queueJobs={oauthQueueJobs}
             queueSummary={oauthQueueSummary}
             onBuildQueue={handleBuildOAuthQueue}

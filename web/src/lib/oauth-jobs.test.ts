@@ -178,6 +178,29 @@ describe("buildOAuthJobs", () => {
     expect(jobs.map((job) => job.authIndex)).toEqual(["idx-b"]);
   });
 
+  it("builds jobs for imported invalid account emails even when quota status is healthy", () => {
+    const jobs = buildOAuthJobs({
+      accounts: [
+        makeAccount({ auth_index: "idx-healthy", email: "Healthy@Outlook.com", status: "healthy", error: "", last_query_at: null }),
+        makeAccount({ auth_index: "idx-other", email: "other@outlook.com", status: "healthy", error: "", last_query_at: null }),
+      ],
+      hotmailAccounts: [makeHotmail({ id: "hotmail-healthy", email: "healthy@outlook.com" })],
+      keeperRefreshFailureAuthIndexes: [],
+      importedInvalidAccountEmails: ["healthy@outlook.com", "missing@outlook.com"],
+      scope: { kind: "all" },
+      now: NOW,
+    });
+
+    expect(jobs).toEqual([
+      expect.objectContaining({
+        authIndex: "idx-healthy",
+        accountEmail: "Healthy@Outlook.com",
+        hotmailId: "hotmail-healthy",
+        hotmailEmail: "healthy@outlook.com",
+      }),
+    ]);
+  });
+
   it("leaves state empty until START_JOB_OAUTH writes the real OAuth state", () => {
     const [job] = buildOAuthJobs({
       accounts: [makeAccount()],

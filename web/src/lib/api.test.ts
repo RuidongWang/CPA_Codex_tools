@@ -116,6 +116,7 @@ describe("normalizeRuntimeConfig", () => {
       hotmailHelperUrl: "http://127.0.0.1:17373",
       hotmailAccounts: [],
       rememberHotmailTokens: false,
+      importedInvalidAccountEmails: [],
     });
   });
 

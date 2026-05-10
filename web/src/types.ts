@@ -51,6 +51,7 @@ export interface OAuthSettings {
   hotmailHelperUrl: string;
   hotmailAccounts: HotmailAccount[];
   rememberHotmailTokens: boolean;
+  importedInvalidAccountEmails: string[];
 }
 
 export type OAuthJobStatus =

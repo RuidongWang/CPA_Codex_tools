@@ -5,6 +5,7 @@ import {
   isOAuthReloginCandidate,
   normalizeHotmailHelperUrl,
   normalizeOAuthSettings,
+  parseInvalidAccountEmailImportText,
   parseHotmailImportText,
   upsertHotmailAccounts,
 } from "./oauth";
@@ -54,15 +55,26 @@ example-two@hotmail.com----pass-2----client-2----refresh-token-2
   });
 });
 
+describe("parseInvalidAccountEmailImportText", () => {
+  it("extracts batch pasted emails, normalizes case, and de-duplicates them", () => {
+    expect(parseInvalidAccountEmailImportText(" Alice@Outlook.com\nbob@hotmail.com, alice@outlook.com bad-text bob@hotmail.com ")).toEqual([
+      "alice@outlook.com",
+      "bob@hotmail.com",
+    ]);
+  });
+});
+
 describe("normalizeOAuthSettings", () => {
-  it("defaults rememberHotmailTokens to false and preserves explicit true", () => {
+  it("defaults rememberHotmailTokens and imported invalid emails, and preserves explicit true", () => {
     expect(normalizeOAuthSettings({}).rememberHotmailTokens).toBe(false);
+    expect(normalizeOAuthSettings({}).importedInvalidAccountEmails).toEqual([]);
     expect(normalizeOAuthSettings({ rememberHotmailTokens: true }).rememberHotmailTokens).toBe(true);
   });
 
-  it("keeps valid helper url and drops incomplete hotmail accounts", () => {
+  it("keeps valid helper url, drops incomplete hotmail accounts, and normalizes imported invalid emails", () => {
     const settings = normalizeOAuthSettings({
       hotmailHelperUrl: "http://127.0.0.1:17373/",
+      importedInvalidAccountEmails: ["A@Outlook.com", "a@outlook.com", "bad-value", "B@Hotmail.com"],
       hotmailAccounts: [
         { id: "", email: "A@Hotmail.com", clientId: "client-a", refreshToken: "token-a", status: "authorized" },
         { id: "", email: "broken@hotmail.com", clientId: "", refreshToken: "token-b", status: "pending" },
@@ -80,6 +92,7 @@ describe("normalizeOAuthSettings", () => {
       }),
     ]);
     expect(settings.rememberHotmailTokens).toBe(false);
+    expect(settings.importedInvalidAccountEmails).toEqual(["a@outlook.com", "b@hotmail.com"]);
   });
 
   it("falls back to local helper for invalid helper url", () => {
@@ -109,5 +122,15 @@ describe("isOAuthReloginCandidate", () => {
     expect(isOAuthReloginCandidate(makeAccount({ has_refresh_token: false }))).toBe(false);
     expect(isOAuthReloginCandidate(makeAccount({ expired: "2026-05-05T00:00:00Z" }))).toBe(false);
     expect(isOAuthReloginCandidate(makeAccount({ auth_index: "idx-a" }), new Set(["idx-a"]))).toBe(true);
+  });
+
+  it("marks imported invalid email matches as candidates without quota error evidence", () => {
+    expect(
+      isOAuthReloginCandidate(
+        makeAccount({ email: "A@Hotmail.com", status: "healthy", last_query_at: null }),
+        new Set(),
+        new Set(["a@hotmail.com"]),
+      ),
+    ).toBe(true);
   });
 });

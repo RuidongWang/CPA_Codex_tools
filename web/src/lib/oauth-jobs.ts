@@ -1,5 +1,5 @@
 import type { AccountItem, HotmailAccount, OAuthJob, OAuthJobErrorType, OAuthJobStatus, OAuthQueueSummary } from "../types";
-import { isOAuthReloginCandidate } from "./oauth";
+import { buildInvalidAccountEmailSet, isOAuthReloginCandidate } from "./oauth";
 
 export const OAUTH_JOB_LEASE_MS = 2 * 60 * 1000;
 export const OAUTH_JOB_ATTEMPT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -33,6 +33,7 @@ export interface BuildOAuthJobsInput {
   accounts: readonly AccountItem[];
   hotmailAccounts: readonly HotmailAccount[];
   keeperRefreshFailureAuthIndexes: readonly string[] | ReadonlySet<string>;
+  importedInvalidAccountEmails?: readonly string[] | ReadonlySet<string>;
   scope: OAuthQueueScope;
   now: string;
 }
@@ -171,11 +172,12 @@ export function buildOAuthJobs(input: BuildOAuthJobsInput): OAuthJob[] {
     input.keeperRefreshFailureAuthIndexes instanceof Set
       ? input.keeperRefreshFailureAuthIndexes
       : new Set(input.keeperRefreshFailureAuthIndexes);
+  const importedInvalidAccountEmailKeys = buildInvalidAccountEmailSet(input.importedInvalidAccountEmails ?? []);
   const hotmailByEmail = new Map(input.hotmailAccounts.map((account) => [normalizeEmailKey(account.email), account]));
 
   return input.accounts
     .filter((account) => scopeIncludes(input.scope, account.auth_index))
-    .filter((account) => isOAuthReloginCandidate(account, keeperRefreshFailureAuthIndexes))
+    .filter((account) => isOAuthReloginCandidate(account, keeperRefreshFailureAuthIndexes, importedInvalidAccountEmailKeys))
     .map((account) => {
       const hotmail = hotmailByEmail.get(normalizeEmailKey(account.email));
       const jobId = buildOAuthJobId(account.auth_index);

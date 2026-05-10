@@ -31,7 +31,7 @@ import {
   updateOAuthJob,
   type OAuthQueueScope,
 } from "../lib/oauth-jobs";
-import { isOAuthReloginCandidate, isQuotaQueryError, upsertHotmailAccounts } from "../lib/oauth";
+import { buildInvalidAccountEmailSet, isOAuthReloginCandidate, isQuotaQueryError, upsertHotmailAccounts } from "../lib/oauth";
 import type { AccountItem, HotmailAccount, OAuthJob, OAuthJobErrorType, OAuthJobStatus, OAuthSettings } from "../types";
 
 interface CodexOAuthBridgeProps {
@@ -43,6 +43,7 @@ interface CodexOAuthBridgeProps {
   selectedAuthIndexes?: string[];
   filteredAuthIndexes?: string[];
   keeperRefreshFailureAuthIndexes?: string[];
+  importedInvalidAccountEmails?: string[];
   onQueueJobsChange: (jobs: OAuthJob[]) => void | Promise<void>;
   onSettingsChange: (settings: OAuthSettings) => void | Promise<void>;
   onStartOAuth: () => Promise<CodexOAuthStartResult>;
@@ -104,12 +105,19 @@ function normalizeEmailKey(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function accountReason(item: AccountItem, keeperRefreshFailureAuthIndexes: ReadonlySet<string>): string {
+function accountReason(
+  item: AccountItem,
+  keeperRefreshFailureAuthIndexes: ReadonlySet<string>,
+  importedInvalidAccountEmailKeys: ReadonlySet<string>,
+): string {
   if (isQuotaQueryError(item)) {
     return item.error || "查询异常";
   }
   if (keeperRefreshFailureAuthIndexes.has(item.auth_index)) {
     return "Keeper 刷新失败";
+  }
+  if (importedInvalidAccountEmailKeys.has(normalizeEmailKey(item.email))) {
+    return "失效账号";
   }
   return "正常";
 }
@@ -262,8 +270,12 @@ function requireJobIdentity(
   }
 }
 
-function getInvalidAccounts(items: readonly AccountItem[], keeperRefreshFailureAuthIndexes: ReadonlySet<string>): AccountItem[] {
-  return items.filter((item) => isOAuthReloginCandidate(item, keeperRefreshFailureAuthIndexes));
+function getInvalidAccounts(
+  items: readonly AccountItem[],
+  keeperRefreshFailureAuthIndexes: ReadonlySet<string>,
+  importedInvalidAccountEmailKeys: ReadonlySet<string>,
+): AccountItem[] {
+  return items.filter((item) => isOAuthReloginCandidate(item, keeperRefreshFailureAuthIndexes, importedInvalidAccountEmailKeys));
 }
 
 function resolveBuildScope(payload: Record<string, unknown>, props: CodexOAuthBridgeProps): OAuthQueueScope {
@@ -368,10 +380,12 @@ export function CodexOAuthBridge(props: CodexOAuthBridgeProps) {
       const currentProps = propsRef.current;
       const scope = resolveBuildScope(payload, currentProps);
       const now = new Date().toISOString();
+      const importedInvalidAccountEmails = currentProps.importedInvalidAccountEmails ?? currentProps.settings.importedInvalidAccountEmails ?? [];
       const jobs = buildOAuthJobs({
         accounts: currentProps.items,
         hotmailAccounts: currentProps.settings.hotmailAccounts,
         keeperRefreshFailureAuthIndexes: currentProps.keeperRefreshFailureAuthIndexes ?? [],
+        importedInvalidAccountEmails,
         scope,
         now,
       });
@@ -760,11 +774,13 @@ export function CodexOAuthBridge(props: CodexOAuthBridgeProps) {
         case "GET_ACCOUNT_POOLS": {
           const currentProps = propsRef.current;
           const keeperFailures = new Set(currentProps.keeperRefreshFailureAuthIndexes ?? []);
-          const invalidAccounts = getInvalidAccounts(currentProps.items, keeperFailures);
+          const importedInvalidAccountEmails = currentProps.importedInvalidAccountEmails ?? currentProps.settings.importedInvalidAccountEmails ?? [];
+          const importedInvalidAccountEmailKeys = buildInvalidAccountEmailSet(importedInvalidAccountEmails);
+          const invalidAccounts = getInvalidAccounts(currentProps.items, keeperFailures, importedInvalidAccountEmailKeys);
           return {
             invalidAccounts: invalidAccounts.map((item) => ({
               ...toOAuthBridgeAccount(item),
-              reason: accountReason(item, keeperFailures),
+              reason: accountReason(item, keeperFailures, importedInvalidAccountEmailKeys),
             })),
             hotmailAccounts: currentProps.settings.hotmailAccounts.map(toOAuthBridgeHotmailAccount),
             counts: {

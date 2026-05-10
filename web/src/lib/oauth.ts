@@ -6,12 +6,19 @@ export const DEFAULT_OAUTH_SETTINGS: OAuthSettings = {
   hotmailHelperUrl: DEFAULT_HOTMAIL_HELPER_URL,
   hotmailAccounts: [],
   rememberHotmailTokens: false,
+  importedInvalidAccountEmails: [],
 };
 
 export type HotmailImportAccount = Pick<HotmailAccount, "email" | "password" | "clientId" | "refreshToken">;
 
+const EMAIL_ADDRESS_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+export function normalizeOAuthEmailKey(value: unknown): string {
+  return normalizeText(value).toLowerCase();
 }
 
 export function buildHotmailAccountId(email: string, clientId: string): string {
@@ -47,6 +54,39 @@ export function parseHotmailImportText(rawText: string): HotmailImportAccount[] 
       clientId,
       refreshToken,
     }));
+}
+
+export function parseInvalidAccountEmailImportText(rawText: string): string[] {
+  const matches = String(rawText || "").match(EMAIL_ADDRESS_PATTERN) ?? [];
+  const seen = new Set<string>();
+  const emails: string[] = [];
+  for (const match of matches) {
+    const email = normalizeOAuthEmailKey(match);
+    if (!email || seen.has(email)) {
+      continue;
+    }
+    seen.add(email);
+    emails.push(email);
+  }
+  return emails;
+}
+
+export function buildInvalidAccountEmailSet(values: readonly string[] | ReadonlySet<string> = []): Set<string> {
+  const set = new Set<string>();
+  for (const value of values) {
+    const email = normalizeOAuthEmailKey(value);
+    if (email) {
+      set.add(email);
+    }
+  }
+  return set;
+}
+
+export function normalizeInvalidAccountEmailList(values: unknown): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  return parseInvalidAccountEmailImportText(values.filter((value): value is string => typeof value === "string").join("\n"));
 }
 
 export function createHotmailAccount(input: HotmailImportAccount | Partial<HotmailAccount>): HotmailAccount | null {
@@ -93,6 +133,7 @@ export function normalizeOAuthSettings(input: Partial<OAuthSettings> | null | un
     hotmailHelperUrl: normalizeHotmailHelperUrl(raw.hotmailHelperUrl),
     hotmailAccounts: accounts,
     rememberHotmailTokens: raw.rememberHotmailTokens === true,
+    importedInvalidAccountEmails: normalizeInvalidAccountEmailList(raw.importedInvalidAccountEmails),
   };
 }
 
@@ -103,6 +144,11 @@ export function isQuotaQueryError(item: AccountItem): boolean {
 export function isOAuthReloginCandidate(
   item: AccountItem,
   keeperRefreshFailureAuthIndexes: ReadonlySet<string> = new Set(),
+  importedInvalidAccountEmailKeys: ReadonlySet<string> = new Set(),
 ): boolean {
-  return isQuotaQueryError(item) || keeperRefreshFailureAuthIndexes.has(item.auth_index);
+  return (
+    isQuotaQueryError(item) ||
+    keeperRefreshFailureAuthIndexes.has(item.auth_index) ||
+    importedInvalidAccountEmailKeys.has(normalizeOAuthEmailKey(item.email))
+  );
 }

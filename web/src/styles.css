@@ -1270,6 +1270,12 @@ button.metric-card:focus-visible {
   accent-color: #77d9c0;
 }
 
+.oauth-import-summary {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .oauth-account-list,
 .oauth-hotmail-list,
 .oauth-log {

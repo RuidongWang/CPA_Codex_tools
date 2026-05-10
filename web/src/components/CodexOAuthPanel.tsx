@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  buildInvalidAccountEmailSet,
   createHotmailAccount,
   isOAuthReloginCandidate,
   isQuotaQueryError,
   normalizeHotmailHelperUrl,
+  parseInvalidAccountEmailImportText,
   parseHotmailImportText,
   upsertHotmailAccounts,
 } from "../lib/oauth";
@@ -43,6 +45,8 @@ interface CodexOAuthPanelProps {
   ) => Promise<HotmailVerificationCodeResult>;
   onCheckLoginQuota: (account: AccountItem) => Promise<void>;
   keeperRefreshFailureAuthIndexes?: string[];
+  importedInvalidAccountEmails?: string[];
+  onImportedInvalidAccountEmailsChange?: (emails: string[]) => void;
   queueJobs?: OAuthJob[];
   queueSummary?: OAuthQueueSummary;
   onBuildQueue?: (scope: "all" | "selected" | "filtered") => void | Promise<void>;
@@ -95,12 +99,19 @@ function formatDateTime(value?: string): string {
   });
 }
 
-function accountReason(item: AccountItem, keeperRefreshFailureAuthIndexes: ReadonlySet<string>): string {
+function accountReason(
+  item: AccountItem,
+  keeperRefreshFailureAuthIndexes: ReadonlySet<string>,
+  importedInvalidAccountEmailKeys: ReadonlySet<string>,
+): string {
   if (isQuotaQueryError(item)) {
     return item.error || "查询异常";
   }
   if (keeperRefreshFailureAuthIndexes.has(item.auth_index)) {
     return "Keeper 刷新失败";
+  }
+  if (importedInvalidAccountEmailKeys.has(normalizeEmailKey(item.email))) {
+    return "失效账号";
   }
   return "正常";
 }
@@ -184,8 +195,10 @@ async function copyTextToClipboard(value: string): Promise<void> {
 }
 
 export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
+  const importedInvalidAccountEmails = props.importedInvalidAccountEmails ?? props.settings.importedInvalidAccountEmails ?? [];
   const [helperUrl, setHelperUrl] = useState(props.settings.hotmailHelperUrl);
   const [importText, setImportText] = useState("");
+  const [invalidAccountImportText, setInvalidAccountImportText] = useState(() => importedInvalidAccountEmails.join("\n"));
   const [accountSearch, setAccountSearch] = useState("");
   const [hotmailSearch, setHotmailSearch] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
@@ -202,10 +215,25 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
     () => new Set(props.keeperRefreshFailureAuthIndexes ?? []),
     [props.keeperRefreshFailureAuthIndexes],
   );
+  const importedInvalidAccountEmailKeys = useMemo(
+    () => buildInvalidAccountEmailSet(importedInvalidAccountEmails),
+    [importedInvalidAccountEmails],
+  );
+
+  const importedInvalidMatchedCount = useMemo(() => {
+    if (!importedInvalidAccountEmailKeys.size) {
+      return 0;
+    }
+    return props.items.filter((item) => importedInvalidAccountEmailKeys.has(normalizeEmailKey(item.email))).length;
+  }, [importedInvalidAccountEmailKeys, props.items]);
 
   const candidates = useMemo(() => {
-    return props.items.filter((item) => isOAuthReloginCandidate(item, keeperRefreshFailureAuthIndexes) && !hiddenCandidateAuthIndexes.has(item.auth_index));
-  }, [hiddenCandidateAuthIndexes, keeperRefreshFailureAuthIndexes, props.items]);
+    return props.items.filter(
+      (item) =>
+        isOAuthReloginCandidate(item, keeperRefreshFailureAuthIndexes, importedInvalidAccountEmailKeys) &&
+        !hiddenCandidateAuthIndexes.has(item.auth_index),
+    );
+  }, [hiddenCandidateAuthIndexes, importedInvalidAccountEmailKeys, keeperRefreshFailureAuthIndexes, props.items]);
 
   const filteredCandidates = useMemo(() => {
     const keyword = accountSearch.trim().toLowerCase();
@@ -304,11 +332,15 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
     setLogs((current) => [`${new Date().toLocaleTimeString("zh-CN", { hour12: false })} ${message}`, ...current].slice(0, 8));
   }
 
-  async function persistSettings(nextSettings: OAuthSettingsWithHotmailTokenPersistence) {
-    await props.onSettingsChange({
+  async function persistSettings(nextSettings: Partial<OAuthSettingsWithHotmailTokenPersistence>) {
+    const mergedSettings = {
       ...includeHotmailTokenPersistence(props.settings),
-      ...includeHotmailTokenPersistence(nextSettings),
-      hotmailHelperUrl: normalizeHotmailHelperUrl(nextSettings.hotmailHelperUrl),
+      ...nextSettings,
+    };
+    await props.onSettingsChange({
+      ...mergedSettings,
+      rememberHotmailTokens: Boolean(mergedSettings.rememberHotmailTokens),
+      hotmailHelperUrl: normalizeHotmailHelperUrl(mergedSettings.hotmailHelperUrl),
     });
   }
 
@@ -355,6 +387,11 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
     } finally {
       setActionLabel("");
     }
+  }
+
+  function handleInvalidAccountEmailImportChange(value: string) {
+    setInvalidAccountImportText(value);
+    props.onImportedInvalidAccountEmailsChange?.(parseInvalidAccountEmailImportText(value));
   }
 
   async function startOAuthSession(options: { openAuthUrl: boolean } = { openAuthUrl: true }) {
@@ -704,6 +741,19 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
               placeholder="邮箱 / 名称"
             />
           </label>
+          <label className="field-stack oauth-invalid-import">
+            <span>批量导入失效邮箱</span>
+            <textarea
+              aria-label="批量导入失效账号邮箱"
+              value={invalidAccountImportText}
+              onChange={(event) => handleInvalidAccountEmailImportChange(event.target.value)}
+              placeholder="每行一个邮箱，也支持逗号、空格分隔"
+              rows={4}
+            />
+          </label>
+          <div className="oauth-import-summary">
+            导入 {importedInvalidAccountEmails.length} 个邮箱，匹配 {importedInvalidMatchedCount} 个账号
+          </div>
           <div className="oauth-account-list">
             {filteredCandidates.map((item) => (
               <label key={item.auth_index} className="oauth-account-row">
@@ -715,7 +765,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
                 />
                 <span>
                   <strong>{item.email || item.name}</strong>
-                  <small>{accountReason(item, keeperRefreshFailureAuthIndexes)} · {item.plan_type || "unknown"}</small>
+                  <small>{accountReason(item, keeperRefreshFailureAuthIndexes, importedInvalidAccountEmailKeys)} · {item.plan_type || "unknown"}</small>
                 </span>
               </label>
             ))}

@@ -37,6 +37,7 @@ const demoConfig: RuntimeConfig = {
     hotmailHelperUrl: "http://127.0.0.1:17373",
     hotmailAccounts: [],
     rememberHotmailTokens: false,
+    importedInvalidAccountEmails: [],
   },
 };
 
@@ -1210,6 +1211,7 @@ describe("browser runtime api", () => {
         oauthSettings: {
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: true,
+          importedInvalidAccountEmails: ["bad@outlook.com"],
           hotmailAccounts: [
             {
               id: "a@hotmail.com::client-id",
@@ -1230,6 +1232,7 @@ describe("browser runtime api", () => {
     expect(stored.managementKey).toBe("");
     expect(stored.oauthSettings.rememberHotmailTokens).toBe(false);
     expect(stored.oauthSettings.hotmailAccounts).toEqual([]);
+    expect(stored.oauthSettings.importedInvalidAccountEmails).toEqual(["bad@outlook.com"]);
     expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("hotmail-password");
     expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("refresh-token");
     expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("123456");
@@ -1242,6 +1245,7 @@ describe("browser runtime api", () => {
         oauthSettings: {
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: true,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "a@hotmail.com::client-id",

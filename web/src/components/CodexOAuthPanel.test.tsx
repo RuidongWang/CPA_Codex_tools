@@ -60,6 +60,7 @@ const emptySettings: OAuthSettings & { rememberHotmailTokens: boolean } = {
   hotmailHelperUrl: "http://127.0.0.1:17373",
   hotmailAccounts: [],
   rememberHotmailTokens: false,
+  importedInvalidAccountEmails: [],
 };
 
 describe("CodexOAuthPanel", () => {
@@ -282,6 +283,41 @@ describe("CodexOAuthPanel", () => {
     expect(within(reloginAccounts).queryByText("normal-disabled@outlook.com")).not.toBeInTheDocument();
   });
 
+  it("imports invalid account emails in bulk and lists matched accounts", async () => {
+    const user = userEvent.setup();
+    const onImportedInvalidAccountEmailsChange = vi.fn();
+
+    render(
+      <CodexOAuthPanel
+        items={[
+          makeAccount({ email: "normal@outlook.com", auth_index: "idx-normal", status: "healthy", error: "", last_query_at: null }),
+          makeAccount({ email: "other@outlook.com", auth_index: "idx-other", status: "healthy", error: "", last_query_at: null }),
+        ]}
+        importedInvalidAccountEmails={["Normal@Outlook.com", "missing@outlook.com"]}
+        onImportedInvalidAccountEmailsChange={onImportedInvalidAccountEmailsChange}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const reloginAccounts = screen.getByRole("region", { name: "失效账号" });
+    expect(within(reloginAccounts).getByText("normal@outlook.com")).toBeInTheDocument();
+    expect(within(reloginAccounts).getByText("失效账号 · free")).toBeInTheDocument();
+    expect(within(reloginAccounts).queryByText("other@outlook.com")).not.toBeInTheDocument();
+    expect(within(reloginAccounts).getByText("导入 2 个邮箱，匹配 1 个账号")).toBeInTheDocument();
+
+    await user.clear(within(reloginAccounts).getByLabelText("批量导入失效账号邮箱"));
+    await user.type(within(reloginAccounts).getByLabelText("批量导入失效账号邮箱"), "other@outlook.com, NORMAL@outlook.com other@outlook.com");
+
+    expect(onImportedInvalidAccountEmailsChange).toHaveBeenLastCalledWith(["other@outlook.com", "normal@outlook.com"]);
+  });
+
   it("imports hotmail accounts in reference format and saves them into settings", async () => {
     const user = userEvent.setup();
     const onSettingsChange = vi.fn();
@@ -380,6 +416,7 @@ describe("CodexOAuthPanel", () => {
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "alice@hotmail.com::client-id",
@@ -524,6 +561,7 @@ describe("CodexOAuthPanel", () => {
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "copy-target@outlook.com::client-id",
@@ -579,6 +617,7 @@ describe("CodexOAuthPanel", () => {
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "brady@outlook.com::client-brady",
@@ -647,6 +686,7 @@ describe("CodexOAuthPanel", () => {
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "first@outlook.com::client-first",
@@ -705,6 +745,7 @@ describe("CodexOAuthPanel", () => {
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
           rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "target@outlook.com::client-main",
