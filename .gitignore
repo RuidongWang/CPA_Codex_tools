@@ -6,3 +6,6 @@ coverage/
 .DS_Store
 .superpowers/
 output/
+web/.runtime/
+web/public/runtime-secret.js
+web/dist/runtime-secret.js

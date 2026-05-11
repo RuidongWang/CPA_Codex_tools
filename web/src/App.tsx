@@ -19,6 +19,7 @@ import {
   DEFAULT_KEEPER_SETTINGS,
   DEFAULT_QUERY_CONCURRENCY,
   downloadSelectedAccounts,
+  exportSensitiveConfig,
   fetchAccountList,
   fetchHotmailVerificationCode,
   loadPayloadCache,
@@ -1352,6 +1353,24 @@ export default function App() {
     }
   }
 
+  async function handleExportSensitiveConfig() {
+    if (isBusy) {
+      return;
+    }
+    const confirmed = window.confirm("将导出包含管理密钥、Hotmail 密码和 Token 的明文 JSON 文件。请只在可信环境中保存。");
+    if (!confirmed) {
+      return;
+    }
+    try {
+      await exportSensitiveConfig(effectiveConfig);
+      setErrorMessage("");
+      setLoadingLabel("敏感配置已导出");
+    } catch (error) {
+      setErrorMessage(resolveErrorMessage(error, "导出敏感配置失败"));
+      setLoadingLabel("导出敏感配置失败");
+    }
+  }
+
   async function handleApplyPriorityPlan(settings: {
     selectedGroups: RuntimeConfig["priorityPlanOrder"];
     priorityPlanOrder: RuntimeConfig["priorityPlanOrder"];
@@ -1921,6 +1940,7 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         onSave={handleSaveSettings}
         onClearCache={handleClearLocalCache}
+        onExportSensitiveConfig={handleExportSensitiveConfig}
       />
       <PriorityBatchPanel
         open={priorityBatchOpen}

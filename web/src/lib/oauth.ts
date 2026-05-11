@@ -94,7 +94,7 @@ export function createHotmailAccount(input: HotmailImportAccount | Partial<Hotma
   const email = normalizeText(input.email);
   const clientId = normalizeText(input.clientId);
   const refreshToken = normalizeText(input.refreshToken);
-  if (!email || !clientId || !refreshToken) {
+  if (!email || !clientId) {
     return null;
   }
   return {

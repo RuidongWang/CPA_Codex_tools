@@ -71,12 +71,13 @@ describe("normalizeOAuthSettings", () => {
     expect(normalizeOAuthSettings({ rememberHotmailTokens: true }).rememberHotmailTokens).toBe(true);
   });
 
-  it("keeps valid helper url, drops incomplete hotmail accounts, and normalizes imported invalid emails", () => {
+  it("keeps valid helper url, preserves password-only hotmail accounts, and normalizes imported invalid emails", () => {
     const settings = normalizeOAuthSettings({
       hotmailHelperUrl: "http://127.0.0.1:17373/",
       importedInvalidAccountEmails: ["A@Outlook.com", "a@outlook.com", "bad-value", "B@Hotmail.com"],
       hotmailAccounts: [
         { id: "", email: "A@Hotmail.com", clientId: "client-a", refreshToken: "token-a", status: "authorized" },
+        { id: "", email: "B@Hotmail.com", password: "mail-password", clientId: "client-b", status: "pending" },
         { id: "", email: "broken@hotmail.com", clientId: "", refreshToken: "token-b", status: "pending" },
       ],
     });
@@ -89,6 +90,14 @@ describe("normalizeOAuthSettings", () => {
         clientId: "client-a",
         refreshToken: "token-a",
         status: "authorized",
+      }),
+      expect.objectContaining({
+        id: "b@hotmail.com::client-b",
+        email: "B@Hotmail.com",
+        password: "mail-password",
+        clientId: "client-b",
+        refreshToken: "",
+        status: "pending",
       }),
     ]);
     expect(settings.rememberHotmailTokens).toBe(false);

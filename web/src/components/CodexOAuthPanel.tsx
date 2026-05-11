@@ -262,7 +262,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
       return linkedHotmailAccounts;
     }
     return linkedHotmailAccounts.filter((account) =>
-      searchableText([account.email, account.clientId, account.status, account.lastCode, account.lastError]).includes(keyword),
+      searchableText([account.email, account.clientId, account.status, account.lastError]).includes(keyword),
     );
   }, [hotmailSearch, linkedHotmailAccounts]);
   const selectedHotmail = filteredHotmailAccounts.find((account) => account.id === selectedHotmailId) ?? filteredHotmailAccounts[0] ?? null;
@@ -461,7 +461,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
         ...hotmailAccount,
         refreshToken: result.nextRefreshToken || hotmailAccount.refreshToken,
         status: "authorized",
-        lastCode: result.code,
+        lastCode: undefined,
         lastCodeAt: now,
         lastError: undefined,
         updatedAt: now,
@@ -831,7 +831,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
                 />
                 <span>
                   <strong>{account.email}</strong>
-                  <small>{account.status} · {account.clientId} · 上次验证码 {account.lastCode || "-"} · {formatDateTime(account.lastCodeAt)}</small>
+                  <small>{account.status} · {account.clientId} · 最近获取 {formatDateTime(account.lastCodeAt)}</small>
                 </span>
               </label>
             ))}

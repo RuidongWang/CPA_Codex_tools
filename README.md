@@ -4,14 +4,18 @@
 
 本仓库只包含客户端工具，不包含 CPA 服务端，也不包含任何账号配置文件。使用前需要先部署可用的 CPA，并在 CPA 中导入 Codex 账号。
 
+面向日常操作的完整说明见 [使用手册](docs/USER_MANUAL.md)。
+
 ## 目录
 
 - [功能概览](#功能概览)
+- [使用手册](docs/USER_MANUAL.md)
 - [界面预览](#界面预览)
 - [快速开始](#快速开始)
 - [Web 端](#web-端)
 - [登录与管理密钥](#登录与管理密钥)
 - [Docker Compose](#docker-compose)
+- [敏感数据与导出](#敏感数据与导出)
 - [批量生成优先级](#批量生成优先级)
 - [Codex OAuth登录](#codex-oauth登录)
 - [数据与缓存](#数据与缓存)
@@ -99,7 +103,7 @@ Web 端位于 `web/`，由 React、TypeScript 和 Vite 构建。
 - CPA 或前置反向代理需要允许本地 Web 页面跨域访问。
 - 浏览器下载账号配置 JSON，不需要配置本地备份路径。
 - Keeper 页面支持策略配置、账号列表检索和选中账号直操作。维护策略支持禁用阈值、过期阈值、维护并发和维护时自动刷新临期证书。
-- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务。
+- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务；管理密钥、Hotmail 密码和可选保存的 Hotmail Token 会先加密再写入浏览器存储。
 
 环境要求：
 
@@ -149,7 +153,7 @@ web/web-server.config.ts
 
 登录页的“记住本次登录”默认开启：
 
-- 开启时，会把 CPA 管理地址和管理密钥保存到当前浏览器本地配置中，下次打开页面会自动验证并进入控制台。
+- 开启时，会把 CPA 管理地址和加密后的管理密钥保存到当前浏览器本地配置中，下次打开页面会自动验证并进入控制台。
 - 关闭时，只保留本次页面会话中的管理密钥；刷新页面或重新打开后需要重新输入管理密钥。
 
 右上角“退出登录”会清空本地保存的管理密钥，重置页面状态并回到登录页。
@@ -202,6 +206,32 @@ docker compose down
 ```
 
 Compose 只负责启动本项目的 Web 环境，不包含 CPA 服务端。
+
+Web 服务启动时会生成运行时加密密钥，并写入 `runtime-secret.js` 供浏览器端解密本地敏感配置。Docker Compose 使用 `/runtime/vault-secret` 持久化该密钥；不要在升级或重启服务时删除对应 volume，否则旧浏览器缓存里的加密管理密钥、Hotmail 密码和 Token 将无法解密。不使用 Docker 时，`npm run web:dev` 和 `npm run web:build` 会在 `web/.runtime/vault-secret` 生成本地密钥，该目录已加入 `.gitignore`。
+
+## 敏感数据与导出
+
+本项目是浏览器本地工具，不提供服务端密钥库。敏感字段会先在浏览器端加密，再写入当前浏览器配置；同一个浏览器页面仍可以在用户确认后导出明文，便于人工备份和迁移。
+
+加密保存的字段：
+
+- CPA 管理密钥：仅在登录页勾选 `记住本次登录` 时保存。
+- Hotmail 密码：导入 Hotmail 账号池后保存，用于刷新页面后继续自动登录流程。
+- Hotmail refresh token：默认不保存；只有勾选 `本地持久保存 Hotmail Token` 时保存。
+
+运行时加密密钥来源：
+
+- Docker Compose：保存在 `/runtime/vault-secret`，由 `web_runtime_secret`、`web_dev_runtime_secret` 或 `web_preview_runtime_secret` volume 持久化。
+- Node.js 本地运行：保存在 `web/.runtime/vault-secret`。
+- 非标准静态打开场景：如果没有 `runtime-secret.js`，浏览器会生成当前 profile 内的 fallback 密钥。
+
+导出敏感配置：
+
+1. 打开右上角设置。
+2. 在 `本地数据` 中点击 `导出敏感配置`。
+3. 确认风险提示后，浏览器会下载 `cpa-codex-sensitive-export-YYYYMMDD-HHmmss.json`。
+
+导出的 JSON 是明文，包含 CPA 地址、管理密钥、Hotmail 邮箱、密码、Client ID 和已保存的 Hotmail Token。它适合放入受保护的离线备份或迁移到另一台可信机器，不应提交到仓库、日志、聊天窗口或工单系统。
 
 ## 批量生成优先级
 
@@ -297,7 +327,7 @@ alice@hotmail.com----password----client-id----refresh-token
 - 扩展需要能访问本地 CPA Web 页和 OpenAI 登录页。manifest 里声明了 `tabs`、`activeTab`、`scripting`、`webNavigation`、`storage`、`sidePanel`、`cookies`、`browsingData` 权限，以及 `http://127.0.0.1/*`、`http://localhost/*`、`https://auth.openai.com/*`、`https://auth0.openai.com/*`、`https://accounts.openai.com/*` 等 host 权限，用于打开/识别登录页、清理会话、读取本地页面桥接状态并提交 callback。
 - 使用扩展前必须保留一个本地 CPA tab，地址应为 `http://127.0.0.1:*` 或 `http://localhost:*`，并停留在本项目 `OAuth` 页面。扩展侧边栏从这个 tab 读取失效账号、Hotmail 账号池、队列和本地桥接 API；只在 OpenAI 登录页或其它网站打开侧边栏无法读取本地队列。
 - 侧边栏为调试和自动登录准备，会显示 Hotmail 密码；当前实现只按需读取并显示，不写入扩展存储。
-- Hotmail 账号池默认不持久保存 `refreshToken`。只有勾选 `本地持久保存 Hotmail Token` 时，浏览器 `localStorage` 才会保存 Hotmail Token；只建议在可信本机启用。
+- Hotmail 账号池中的邮箱、Client ID 和密码会加密保存在浏览器本地，方便刷新页面后继续使用扩展自动登录。`refreshToken` 默认不持久保存；只有勾选 `本地持久保存 Hotmail Token` 时，浏览器本地配置才会加密保存 Hotmail Token。只建议在可信本机启用该选项。
 - OAuth 登录成功后的恢复判断以额度查询结果为准，不只依赖 CPA 登录状态成功。
 - 普通 Web 页面不能跨域控制 `auth.openai.com` DOM；自动填写验证码和点击授权按钮需要安装上述浏览器扩展。
 
@@ -305,10 +335,10 @@ alice@hotmail.com----password----client-id----refresh-token
 
 Web 端本地缓存使用两类浏览器存储：
 
-- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存管理密钥。
+- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存加密后的管理密钥。
 - `IndexedDB` 保存账号列表缓存和额度快照，用于页面刷新或重新加载账号列表后的自动回填。
 
-设置面板中的“清空本地缓存”会清除以上 Web 端缓存。浏览器下载的账号配置 JSON 不归本项目管理。
+本地敏感字段使用运行时密钥加密，包括管理密钥、Hotmail 密码和可选保存的 Hotmail Token。设置面板中的 `导出敏感配置` 会下载明文 JSON，内容包含这些敏感字段，只应保存在可信位置。设置面板中的“清空本地缓存”会清除以上 Web 端缓存和浏览器 fallback 加密密钥。浏览器下载的账号配置 JSON 和敏感配置导出文件不归本项目管理。
 
 本地优先级草稿只存在当前页面内存中。刷新页面后草稿会消失，已同步到 CPA 的远端优先级不受影响。
 
@@ -353,6 +383,13 @@ cd web
 npm run web:build
 ```
 
+单独生成或复用运行时密钥：
+
+```bash
+cd web
+npm run runtime:secret
+```
+
 检查 Compose 配置：
 
 ```bash
@@ -367,8 +404,10 @@ docker compose config
 ├─ README.md
 ├─ CHANGELOG.md
 ├─ docs/
+│  ├─ USER_MANUAL.md
 │  └─ readme/
 └─ web/
+   ├─ scripts/
    ├─ package.json
    ├─ package-lock.json
    ├─ web-server.config.ts
@@ -380,6 +419,8 @@ docker compose config
 
 - `web/src/App.tsx` 负责主状态机、加载、查询、下载和同步流程。
 - `web/src/lib/api.ts` 负责浏览器端 CPA 请求、数据归一化、下载、Keeper 维护和额度快照持久化。
+- `web/src/lib/crypto-vault.ts` 负责浏览器端敏感字段加密、解密和运行时密钥读取。
+- `web/scripts/write-runtime-secret.mjs` 负责生成部署时的 `runtime-secret.js`。
 - `web/src/components/` 放账号表格、工具条、设置面板、进度面板、Keeper 面板、Codex OAuth 面板和优先级弹层。
 - `docker-compose.yml` 提供本地 Web 开发和预览服务。
 

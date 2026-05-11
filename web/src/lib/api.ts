@@ -1,5 +1,6 @@
 import { normalizePriorityPlanKey, normalizePriorityPlanOrder, normalizePriorityPlanRanges, PRIORITY_PLAN_KEYS } from "./priority";
 import { normalizeHotmailHelperUrl, normalizeOAuthSettings } from "./oauth";
+import { decryptStringValue, encryptStringValue, isEncryptedValue, VAULT_SECRET_STORAGE_KEY } from "./crypto-vault";
 import {
   clearWebPayloadCache,
   clearWebQuotaSnapshots,
@@ -21,6 +22,21 @@ import type {
   QueryProgressEvent,
   RuntimeConfig,
 } from "../types";
+
+type StoredHotmailAccount = Partial<Omit<HotmailAccount, "password" | "refreshToken" | "lastCode">> & {
+  password?: unknown;
+  refreshToken?: unknown;
+  lastCode?: unknown;
+};
+
+type StoredOAuthSettings = Partial<Omit<RuntimeConfig["oauthSettings"], "hotmailAccounts">> & {
+  hotmailAccounts?: StoredHotmailAccount[];
+};
+
+type StoredRuntimeConfig = Partial<Omit<RuntimeConfig, "managementKey" | "oauthSettings">> & {
+  managementKey?: unknown;
+  oauthSettings?: StoredOAuthSettings;
+};
 
 export interface CodexOAuthStartResult {
   authUrl: string;
@@ -73,6 +89,21 @@ export interface ManagementBaseUrlInspection {
 export interface SaveRuntimeConfigOptions {
   rememberManagementKey?: boolean;
   rememberHotmailTokens?: boolean;
+}
+
+export interface SensitiveConfigExport {
+  schema_version: 1;
+  exported_at: string;
+  cpaBaseUrl: string;
+  managementKey: string;
+  oauthSettings: {
+    hotmailAccounts: Array<{
+      email: string;
+      password: string;
+      clientId: string;
+      refreshToken: string;
+    }>;
+  };
 }
 
 // 开源版不内置开发期地址，这里只保留示例占位，避免把本地端口写死到产物和文档里。
@@ -809,6 +840,12 @@ export async function submitCodexOAuthCallback(config: RuntimeConfig, state: str
   }
   if (parsedRedirectUrl.protocol !== "http:" && parsedRedirectUrl.protocol !== "https:") {
     throw new Error("OAuth 回调 URL 仅支持 HTTP 或 HTTPS");
+  }
+  if (!isLocalManagementHost(parsedRedirectUrl.hostname)) {
+    throw new Error("OAuth 回调 URL 仅支持本地回调地址");
+  }
+  if (!["/auth/callback", "/codex/callback"].includes(parsedRedirectUrl.pathname)) {
+    throw new Error("OAuth 回调 URL 路径不支持");
   }
   const callbackState = parsedRedirectUrl.searchParams.get("state")?.trim() ?? "";
   if (!callbackState) {
@@ -1622,6 +1659,69 @@ function readWebStorage<T>(primaryKey: string, legacyKeys: string[] = []): T | n
   }
 }
 
+function cleanStorageRecord<T extends Record<string, unknown>>(record: T): T {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T;
+}
+
+async function decryptStoredHotmailAccount(input: unknown): Promise<StoredHotmailAccount> {
+  const account = readRecord(input) as StoredHotmailAccount;
+  return cleanStorageRecord({
+    ...account,
+    password: await decryptStringValueOrEmpty(account.password),
+    refreshToken: await decryptStringValueOrEmpty(account.refreshToken),
+    // 验证码只保留在当前 OAuth 会话里，避免长期写入浏览器存储。
+    lastCode: undefined,
+  });
+}
+
+async function decryptStringValueOrEmpty(value: unknown): Promise<string> {
+  try {
+    return await decryptStringValue(value);
+  } catch {
+    return "";
+  }
+}
+
+async function decryptStoredRuntimeConfig(input: StoredRuntimeConfig | null): Promise<Partial<RuntimeConfig> | null> {
+  if (!input) {
+    return null;
+  }
+  const oauthSettings = readRecord(input.oauthSettings) as StoredOAuthSettings;
+  const hotmailAccounts = Array.isArray(oauthSettings.hotmailAccounts)
+    ? await Promise.all(oauthSettings.hotmailAccounts.map((account) => decryptStoredHotmailAccount(account)))
+    : [];
+  return {
+    ...input,
+    managementKey: await decryptStringValueOrEmpty(input.managementKey),
+    oauthSettings: {
+      ...oauthSettings,
+      hotmailAccounts,
+    },
+  } as Partial<RuntimeConfig>;
+}
+
+function storedRuntimeConfigNeedsRewrite(input: StoredRuntimeConfig | null): boolean {
+  if (!input) {
+    return false;
+  }
+  if (typeof input.managementKey === "string" && input.managementKey) {
+    return true;
+  }
+  const accounts = Array.isArray(input.oauthSettings?.hotmailAccounts) ? input.oauthSettings.hotmailAccounts : [];
+  return accounts.some((account) => {
+    const password = account.password;
+    const refreshToken = account.refreshToken;
+    const lastCode = account.lastCode;
+    return (
+      (typeof password === "string" && password.length > 0) ||
+      (typeof refreshToken === "string" && refreshToken.length > 0) ||
+      (typeof lastCode === "string" && lastCode.length > 0) ||
+      (password !== undefined && !isEncryptedValue(password)) ||
+      (refreshToken !== undefined && !isEncryptedValue(refreshToken))
+    );
+  });
+}
+
 function readLegacyWebPayloadStorage(): PayloadEnvelope | null {
   for (const key of [WEB_PAYLOAD_CACHE_KEY, LEGACY_WEB_PAYLOAD_CACHE_KEY]) {
     try {
@@ -1666,6 +1766,44 @@ function triggerBrowserDownload(name: string, content: string): void {
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(href);
+}
+
+function formatExportTimestamp(value: string): string {
+  const parsed = Date.parse(value);
+  const date = Number.isFinite(parsed) ? new Date(parsed) : new Date();
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  const second = String(date.getSeconds()).padStart(2, "0");
+  return `${year}${month}${day}-${hour}${minute}${second}`;
+}
+
+export function buildSensitiveConfigExport(config: RuntimeConfig, exportedAt = new Date().toISOString()): SensitiveConfigExport {
+  const normalized = normalizeRuntimeConfig(config);
+  return {
+    schema_version: 1,
+    exported_at: exportedAt,
+    cpaBaseUrl: normalized.cpaBaseUrl,
+    managementKey: normalized.managementKey,
+    oauthSettings: {
+      hotmailAccounts: normalized.oauthSettings.hotmailAccounts.map((account) => ({
+        email: account.email,
+        password: account.password ?? "",
+        clientId: account.clientId,
+        refreshToken: account.refreshToken,
+      })),
+    },
+  };
+}
+
+export async function exportSensitiveConfig(config: RuntimeConfig): Promise<void> {
+  const exportedAt = new Date().toISOString();
+  triggerBrowserDownload(
+    `cpa-codex-sensitive-export-${formatExportTimestamp(exportedAt)}.json`,
+    `${JSON.stringify(buildSensitiveConfigExport(config, exportedAt), null, 2)}\n`,
+  );
 }
 
 async function webDownloadSelectedAccounts(
@@ -2240,36 +2378,73 @@ export async function queryCachedAccounts(
 }
 
 export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
-  const rawConfig = readWebStorage<Partial<RuntimeConfig>>(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
-  const normalized = normalizeRuntimeConfig(rawConfig);
+  const rawConfig = readWebStorage<StoredRuntimeConfig>(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
+  const decryptedConfig = await decryptStoredRuntimeConfig(rawConfig);
+  const normalized = normalizeRuntimeConfig(decryptedConfig);
   const shouldStripHistoricalHotmailTokens =
-    rawConfig?.oauthSettings &&
-    normalizeOAuthSettings(rawConfig.oauthSettings).rememberHotmailTokens !== true &&
+    decryptedConfig?.oauthSettings &&
+    normalizeOAuthSettings(decryptedConfig.oauthSettings).rememberHotmailTokens !== true &&
     normalized.oauthSettings.hotmailAccounts.length > 0;
-  if (shouldStripHistoricalHotmailTokens) {
-    const sanitized = sanitizeRuntimeConfigForStorage(normalized, { rememberHotmailTokens: false });
-    writeWebStorage(WEB_RUNTIME_CONFIG_KEY, sanitized, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
-    return sanitized;
+  if (shouldStripHistoricalHotmailTokens || storedRuntimeConfigNeedsRewrite(rawConfig)) {
+    const nextConfig = shouldStripHistoricalHotmailTokens
+      ? {
+          ...normalized,
+          oauthSettings: {
+            ...normalized.oauthSettings,
+            rememberHotmailTokens: false,
+            hotmailAccounts: normalized.oauthSettings.hotmailAccounts.map((account) => ({
+              ...account,
+              refreshToken: "",
+            })),
+          },
+        }
+      : normalized;
+    writeWebStorage(
+      WEB_RUNTIME_CONFIG_KEY,
+      await sanitizeRuntimeConfigForStorage(nextConfig, {
+        rememberManagementKey: Boolean(nextConfig.managementKey),
+        rememberHotmailTokens: nextConfig.oauthSettings.rememberHotmailTokens,
+      }),
+      [LEGACY_WEB_RUNTIME_CONFIG_KEY],
+    );
+    return nextConfig;
   }
   return normalized;
 }
 
-function sanitizeRuntimeConfigForStorage(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): RuntimeConfig {
+async function sanitizeHotmailAccountForStorage(account: HotmailAccount, rememberRefreshToken: boolean): Promise<Record<string, unknown>> {
+  return cleanStorageRecord({
+    id: account.id,
+    email: account.email,
+    password: account.password ? await encryptStringValue(account.password) : undefined,
+    clientId: account.clientId,
+    refreshToken: rememberRefreshToken && account.refreshToken ? await encryptStringValue(account.refreshToken) : undefined,
+    status: account.status,
+    lastCodeAt: account.lastCodeAt,
+    lastError: account.lastError,
+    updatedAt: account.updatedAt,
+  });
+}
+
+async function sanitizeRuntimeConfigForStorage(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): Promise<Record<string, unknown>> {
   const normalized = normalizeRuntimeConfig(config);
   const rememberHotmailTokens = options.rememberHotmailTokens ?? normalized.oauthSettings.rememberHotmailTokens;
+  const hotmailAccounts = await Promise.all(
+    normalized.oauthSettings.hotmailAccounts.map((account) => sanitizeHotmailAccountForStorage(account, rememberHotmailTokens)),
+  );
   return {
     ...normalized,
-    managementKey: options.rememberManagementKey === false ? "" : normalized.managementKey,
+    managementKey: options.rememberManagementKey === false || !normalized.managementKey ? "" : await encryptStringValue(normalized.managementKey),
     oauthSettings: {
       ...normalized.oauthSettings,
       rememberHotmailTokens,
-      hotmailAccounts: rememberHotmailTokens ? normalized.oauthSettings.hotmailAccounts : [],
+      hotmailAccounts,
     },
   };
 }
 
 export async function saveRuntimeConfig(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): Promise<void> {
-  writeWebStorage(WEB_RUNTIME_CONFIG_KEY, sanitizeRuntimeConfigForStorage(config, options), [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
+  writeWebStorage(WEB_RUNTIME_CONFIG_KEY, await sanitizeRuntimeConfigForStorage(config, options), [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
 }
 
 export async function loadPayloadCache(): Promise<PayloadEnvelope | null> {
@@ -2298,6 +2473,7 @@ export async function clearLocalCache(): Promise<void> {
   // 把新旧命名空间都清掉，确保手工迁移前后的残留配置不会回流。
   removeWebStorage(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
   removeWebStorage(WEB_PAYLOAD_CACHE_KEY, [LEGACY_WEB_PAYLOAD_CACHE_KEY]);
+  removeWebStorage(VAULT_SECRET_STORAGE_KEY);
   await clearWebPayloadCache();
   await clearWebQuotaSnapshots();
 }

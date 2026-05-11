@@ -109,17 +109,34 @@ function requestOAuthBridge(action: OAuthBridgeAction, payload: Record<string, u
       }
     };
     window.addEventListener("message", handler);
-    window.postMessage(
-      {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
         source: OAUTH_BRIDGE_REQUEST_SOURCE,
         type: OAUTH_BRIDGE_REQUEST_TYPE,
         requestId,
         action,
         payload,
       },
-      window.location.origin,
+        origin: window.location.origin,
+        source: window,
+      }),
     );
   });
+}
+
+function dispatchRawBridgeRequest(action: OAuthBridgeAction, payload: Record<string, unknown>, eventInit: MessageEventInit) {
+  const requestId = `raw-${action}-${Math.random().toString(36).slice(2)}`;
+  window.dispatchEvent(new MessageEvent("message", {
+    data: {
+      source: OAUTH_BRIDGE_REQUEST_SOURCE,
+      type: OAUTH_BRIDGE_REQUEST_TYPE,
+      requestId,
+      action,
+      payload,
+    },
+    ...eventInit,
+  }));
 }
 
 function jobIdentity(overrides: Record<string, unknown> = {}) {
@@ -178,6 +195,19 @@ function renderBridge(overrides: Partial<React.ComponentProps<typeof CodexOAuthB
 }
 
 describe("CodexOAuthBridge", () => {
+  it("ignores bridge requests that do not come from the same window and origin", async () => {
+    const onQueueJobsChange = vi.fn();
+    renderBridge({ onQueueJobsChange });
+
+    const channel = new MessageChannel();
+    dispatchRawBridgeRequest("BUILD_QUEUE", {}, { origin: window.location.origin, source: channel.port1 });
+    dispatchRawBridgeRequest("BUILD_QUEUE", {}, { origin: "https://evil.example", source: window });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(onQueueJobsChange).not.toHaveBeenCalled();
+  });
+
   it("responds globally with capabilities and safe account pools", async () => {
     renderBridge({
       items: [
@@ -624,11 +654,11 @@ describe("CodexOAuthBridge", () => {
             email: "alice@hotmail.com",
             refreshToken: "rotated-refresh-token",
             status: "authorized",
-            lastCode: "246810",
           }),
         ],
       }),
     );
+    expect(JSON.stringify(onSettingsChange.mock.calls.at(-1)?.[0])).not.toContain("246810");
     expect(JSON.stringify(response)).not.toContain("rotated-refresh-token");
     expect(JSON.stringify(response)).not.toContain("refresh-token-a");
     expect(JSON.stringify(response)).not.toContain("mail-password");

@@ -10,6 +10,7 @@ interface SettingsPanelProps {
   onClose: () => void;
   onSave: (settings: { queryConcurrency: number; keeperSettings: KeeperSettings }) => void;
   onClearCache: () => void;
+  onExportSensitiveConfig: () => void;
 }
 
 function normalizeConcurrency(input: string, fallback: number): number {
@@ -134,6 +135,14 @@ export function SettingsPanel(props: SettingsPanelProps) {
           <section className="settings-dialog__section">
             <p className="settings-dialog__section-title">本地数据</p>
             <p className="settings-dialog__hint">{cacheHint}</p>
+            <button
+              type="button"
+              className="command-button"
+              onClick={props.onExportSensitiveConfig}
+              disabled={props.saving || props.clearingCache || props.busy}
+            >
+              导出敏感配置
+            </button>
             <button
               type="button"
               className="command-button command-button--danger"

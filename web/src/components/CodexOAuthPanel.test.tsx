@@ -458,10 +458,10 @@ describe("CodexOAuthPanel", () => {
           email: "a@hotmail.com",
           refreshToken: "next-refresh-token",
           status: "authorized",
-          lastCode: "123456",
         }),
       ],
     }));
+    expect(JSON.stringify(onSettingsChange.mock.calls.at(-1)?.[0])).not.toContain("123456");
 
     await user.type(
       screen.getByLabelText("OAuth 回调 URL"),

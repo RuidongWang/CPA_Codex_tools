@@ -146,6 +146,17 @@ function getOAuthStatusValue(result: CodexOAuthStatusResult | CodexOAuthCallback
   return result.status === "pending" || result.status === "success" || result.status === "error" ? result.status : "";
 }
 
+function isTrustedBridgeMessageEvent(event: MessageEvent): boolean {
+  if (event.source !== window) {
+    return false;
+  }
+  const currentOrigin = window.location.origin;
+  if (currentOrigin === "null") {
+    return !event.origin || event.origin === "null";
+  }
+  return event.origin === currentOrigin;
+}
+
 function publicStartResult(result: CodexOAuthStartResult): Record<string, unknown> {
   return {
     authUrl: result.authUrl,
@@ -534,7 +545,7 @@ export function CodexOAuthBridge(props: CodexOAuthBridgeProps) {
             ...hotmail,
             refreshToken: result.nextRefreshToken,
             status: "authorized",
-            lastCode: result.code,
+            lastCode: undefined,
             lastCodeAt: codeAt,
             lastError: undefined,
             updatedAt: codeAt,
@@ -813,6 +824,9 @@ export function CodexOAuthBridge(props: CodexOAuthBridgeProps) {
     }
 
     function handleBridgeMessage(event: MessageEvent) {
+      if (!isTrustedBridgeMessageEvent(event)) {
+        return;
+      }
       if (!isOAuthBridgeRequest(event.data)) {
         return;
       }
