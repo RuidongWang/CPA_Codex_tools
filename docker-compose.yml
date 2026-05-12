@@ -12,12 +12,36 @@ services:
     environment:
       <<: *web-environment
       NODE_ENV: development
-    command: sh -c "npm ci && npm run web:dev -- --host 0.0.0.0"
+    command: sh -c "npm ci && CPA_CODEX_VAULT_SECRET_FILE=/runtime/vault-secret npm run web:build && NODE_ENV=production npm run web:preview -- --host 0.0.0.0 --port 5173"
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     volumes:
       - ./web:/workspace/web
+      - web_runtime_secret:/runtime
       - web_node_modules:/workspace/web/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  web-dev:
+    image: node:20-bookworm-slim
+    profiles:
+      - dev
+    working_dir: /workspace/web
+    init: true
+    environment:
+      <<: *web-environment
+      NODE_ENV: development
+    command: sh -c "npm ci && CPA_CODEX_VAULT_SECRET_FILE=/runtime/vault-secret CPA_CODEX_RUNTIME_SECRET_OUTPUT=public/runtime-secret.js npm run web:dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "127.0.0.1:5174:5173"
+    volumes:
+      - ./web:/workspace/web
+      - web_dev_runtime_secret:/runtime
+      - web_dev_node_modules:/workspace/web/node_modules
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 10s
@@ -33,12 +57,13 @@ services:
     init: true
     environment:
       <<: *web-environment
-      NODE_ENV: production
-    command: sh -c "npm ci && npm run web:build && npm run web:preview -- --host 0.0.0.0"
+      NODE_ENV: development
+    command: sh -c "npm ci && CPA_CODEX_VAULT_SECRET_FILE=/runtime/vault-secret npm run web:build && NODE_ENV=production npm run web:preview -- --host 0.0.0.0 --port 9999"
     ports:
-      - "9999:9999"
+      - "127.0.0.1:9999:9999"
     volumes:
       - ./web:/workspace/web
+      - web_preview_runtime_secret:/runtime
       - web_preview_node_modules:/workspace/web/node_modules
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:9999').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
@@ -49,4 +74,8 @@ services:
 
 volumes:
   web_node_modules:
+  web_runtime_secret:
+  web_dev_node_modules:
+  web_dev_runtime_secret:
   web_preview_node_modules:
+  web_preview_runtime_secret:

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { KeeperSettings, RuntimeConfig } from "../types";
+import { useI18n } from "../lib/i18n";
+import type { KeeperSettings, RuntimeConfig, ThemeMode, UiSettings } from "../types";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -8,9 +9,15 @@ interface SettingsPanelProps {
   clearingCache: boolean;
   busy: boolean;
   onClose: () => void;
-  onSave: (settings: { queryConcurrency: number; keeperSettings: KeeperSettings }) => void;
+  onSave: (settings: { queryConcurrency: number; keeperSettings: KeeperSettings; uiSettings: UiSettings }) => void;
   onClearCache: () => void;
+  onExportSensitiveConfig: () => void;
 }
+
+const DEFAULT_PANEL_UI_SETTINGS: UiSettings = {
+  themeMode: "system",
+  language: "zh",
+};
 
 function normalizeConcurrency(input: string, fallback: number): number {
   const parsed = Number.parseInt(input.trim(), 10);
@@ -38,43 +45,69 @@ function normalizeNonNegativeInteger(input: string, fallback: number): number {
 
 // 设置面板只承载 Web 运行时配置，把查询并发和缓存清理收在一个轻量弹层里。
 export function SettingsPanel(props: SettingsPanelProps) {
+  const { t } = useI18n();
   const [queryConcurrency, setQueryConcurrency] = useState("6");
   const [keeperQuotaThreshold, setKeeperQuotaThreshold] = useState("100");
   const [keeperExpiryThresholdDays, setKeeperExpiryThresholdDays] = useState("3");
   const [keeperWorkerThreads, setKeeperWorkerThreads] = useState("6");
   const [keeperEnableRefresh, setKeeperEnableRefresh] = useState(true);
+  const [themeMode, setThemeMode] = useState<ThemeMode>("system");
+  const [language, setLanguage] = useState<UiSettings["language"]>("zh");
 
   useEffect(() => {
     if (!props.open) {
       return;
     }
+    const uiSettings = props.config.uiSettings ?? DEFAULT_PANEL_UI_SETTINGS;
     setQueryConcurrency(String(props.config.queryConcurrency));
     setKeeperQuotaThreshold(String(props.config.keeperSettings.quotaThreshold));
     setKeeperExpiryThresholdDays(String(props.config.keeperSettings.expiryThresholdDays));
     setKeeperWorkerThreads(String(props.config.keeperSettings.workerThreads));
     setKeeperEnableRefresh(props.config.keeperSettings.enableRefresh);
-  }, [props.config.keeperSettings, props.config.queryConcurrency, props.open]);
+    setThemeMode(uiSettings.themeMode);
+    setLanguage(uiSettings.language);
+  }, [props.config.keeperSettings, props.config.queryConcurrency, props.config.uiSettings, props.open]);
 
   if (!props.open) {
     return null;
   }
-  const cacheHint = "会删除浏览器里保存的 CPA 地址、管理密钥、账号列表缓存和额度快照。";
+  const cacheHint = t("settings.cacheHint");
 
   return (
     <div className="settings-dialog__backdrop" role="presentation">
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label="查询设置">
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-label={t("settings.title")}>
         <header className="settings-dialog__header">
           <div>
-            <h2>查询设置</h2>
+            <h2>{t("settings.title")}</h2>
           </div>
           <button type="button" className="settings-dialog__ghost" onClick={props.onClose} disabled={props.saving}>
-            关闭
+            {t("settings.close")}
           </button>
         </header>
         <div className="settings-dialog__body">
-          <p className="settings-dialog__hint">账号配置备份会通过浏览器直接下载 JSON 文件，不需要配置本地路径。</p>
+          <p className="settings-dialog__hint">{t("settings.hint")}</p>
+          <section className="settings-dialog__section">
+            <p className="settings-dialog__section-title">{t("settings.uiSection")}</p>
+            <div className="settings-field-grid settings-field-grid--two">
+              <label className="settings-field">
+                <span>{t("settings.themeMode")}</span>
+                <select value={themeMode} onChange={(event) => setThemeMode(event.target.value as ThemeMode)}>
+                  <option value="system">{t("settings.themeSystem")}</option>
+                  <option value="light">{t("settings.themeLight")}</option>
+                  <option value="dark">{t("settings.themeDark")}</option>
+                </select>
+              </label>
+              <label className="settings-field">
+                <span>{t("settings.language")}</span>
+                <select value={language} onChange={(event) => setLanguage(event.target.value as UiSettings["language"])}>
+                  <option value="zh">{t("settings.languageZh")}</option>
+                  <option value="en">{t("settings.languageEn")}</option>
+                </select>
+              </label>
+            </div>
+          </section>
           <label className="settings-field">
-            <span>并发数</span>
+            <span>{t("settings.concurrency")}</span>
             <input
               type="number"
               min={1}
@@ -85,10 +118,10 @@ export function SettingsPanel(props: SettingsPanelProps) {
             />
           </label>
           <section className="settings-dialog__section">
-            <p className="settings-dialog__section-title">Keeper 策略</p>
+            <p className="settings-dialog__section-title">{t("settings.keeperSection")}</p>
             <div className="settings-field-grid">
               <label className="settings-field">
-                <span>禁用阈值</span>
+                <span>{t("settings.quotaThreshold")}</span>
                 <input
                   type="number"
                   min={0}
@@ -100,7 +133,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 />
               </label>
               <label className="settings-field">
-                <span>过期阈值天数</span>
+                <span>{t("settings.expiryThresholdDays")}</span>
                 <input
                   type="number"
                   min={0}
@@ -111,7 +144,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 />
               </label>
               <label className="settings-field">
-                <span>维护并发数</span>
+                <span>{t("settings.workerThreads")}</span>
                 <input
                   type="number"
                   min={1}
@@ -128,25 +161,33 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 checked={keeperEnableRefresh}
                 onChange={(event) => setKeeperEnableRefresh(event.target.checked)}
               />
-              <span>维护时自动刷新临期证书</span>
+              <span>{t("settings.enableRefresh")}</span>
             </label>
           </section>
           <section className="settings-dialog__section">
-            <p className="settings-dialog__section-title">本地数据</p>
+            <p className="settings-dialog__section-title">{t("settings.localData")}</p>
             <p className="settings-dialog__hint">{cacheHint}</p>
+            <button
+              type="button"
+              className="command-button"
+              onClick={props.onExportSensitiveConfig}
+              disabled={props.saving || props.clearingCache || props.busy}
+            >
+              {t("settings.exportSensitive")}
+            </button>
             <button
               type="button"
               className="command-button command-button--danger"
               onClick={props.onClearCache}
               disabled={props.saving || props.clearingCache || props.busy}
             >
-              {props.clearingCache ? "清理中" : "清空本地缓存"}
+              {props.clearingCache ? t("settings.clearing") : t("settings.clearCache")}
             </button>
           </section>
         </div>
         <footer className="settings-dialog__footer">
           <button type="button" className="command-button" onClick={props.onClose} disabled={props.saving || props.clearingCache}>
-            取消
+            {t("settings.cancel")}
           </button>
           <button
             type="button"
@@ -160,11 +201,15 @@ export function SettingsPanel(props: SettingsPanelProps) {
                   enableRefresh: keeperEnableRefresh,
                   workerThreads: normalizeConcurrency(keeperWorkerThreads, props.config.keeperSettings.workerThreads),
                 },
+                uiSettings: {
+                  themeMode,
+                  language,
+                },
               })
             }
             disabled={props.saving || props.clearingCache}
           >
-            {props.saving ? "保存中" : "保存设置"}
+            {props.saving ? t("settings.saving") : t("settings.save")}
           </button>
         </footer>
       </section>

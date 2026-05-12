@@ -19,6 +19,12 @@ const baseConfig: RuntimeConfig = {
   oauthSettings: {
     hotmailHelperUrl: "http://127.0.0.1:17373",
     hotmailAccounts: [],
+    rememberHotmailTokens: false,
+    importedInvalidAccountEmails: [],
+  },
+  uiSettings: {
+    themeMode: "system",
+    language: "zh",
   },
 };
 
@@ -34,17 +40,21 @@ describe("SettingsPanel", () => {
         onClose={() => undefined}
         onSave={() => undefined}
         onClearCache={() => undefined}
+        onExportSensitiveConfig={() => undefined}
       />,
     );
 
     const dialog = screen.getByRole("dialog", { name: "查询设置" });
 
     expect(within(dialog).getByLabelText("并发数")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("页面模式")).toHaveValue("system");
+    expect(within(dialog).getByLabelText("语言")).toHaveValue("zh");
     expect(within(dialog).getByLabelText("禁用阈值")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("过期阈值天数")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("维护并发数")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("维护时自动刷新临期证书")).toBeChecked();
     expect(within(dialog).getByRole("button", { name: "清空本地缓存" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "导出敏感配置" })).toBeInTheDocument();
     expect(within(dialog).getByText("账号配置备份会通过浏览器直接下载 JSON 文件，不需要配置本地路径。")).toBeInTheDocument();
     expect(within(dialog).queryByLabelText("查询并发数")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("优先级顺序")).not.toBeInTheDocument();
@@ -67,6 +77,7 @@ describe("SettingsPanel", () => {
         onClose={() => undefined}
         onSave={onSave}
         onClearCache={() => undefined}
+        onExportSensitiveConfig={() => undefined}
       />,
     );
 
@@ -89,6 +100,10 @@ describe("SettingsPanel", () => {
         enableRefresh: false,
         workerThreads: 8,
       },
+      uiSettings: {
+        themeMode: "system",
+        language: "zh",
+      },
     });
   });
 
@@ -106,11 +121,35 @@ describe("SettingsPanel", () => {
         onClose={() => undefined}
         onSave={() => undefined}
         onClearCache={onClearCache}
+        onExportSensitiveConfig={() => undefined}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "清空本地缓存" }));
 
     expect(onClearCache).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击导出敏感配置会触发对应回调", async () => {
+    const user = userEvent.setup();
+    const onExportSensitiveConfig = vi.fn();
+
+    render(
+      <SettingsPanel
+        open
+        config={baseConfig}
+        saving={false}
+        clearingCache={false}
+        busy={false}
+        onClose={() => undefined}
+        onSave={() => undefined}
+        onClearCache={() => undefined}
+        onExportSensitiveConfig={onExportSensitiveConfig}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "导出敏感配置" }));
+
+    expect(onExportSensitiveConfig).toHaveBeenCalledTimes(1);
   });
 });

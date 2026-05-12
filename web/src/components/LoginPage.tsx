@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { DEFAULT_CPA_BASE_URL } from "../lib/api";
+import { DEFAULT_CPA_BASE_URL, inspectManagementBaseUrl } from "../lib/api";
+import { useI18n } from "../lib/i18n";
 import type { RuntimeConfig } from "../types";
 
 interface LoginPageProps {
@@ -12,14 +13,18 @@ interface LoginPageProps {
 }
 
 export function LoginPage(props: LoginPageProps) {
+  const { t } = useI18n();
   const [showKey, setShowKey] = useState(false);
   const [rememberLogin, setRememberLogin] = useState(true);
+  const baseUrlInspection = inspectManagementBaseUrl(props.config.cpaBaseUrl);
+  const baseUrlNotice = baseUrlInspection.error || baseUrlInspection.warning;
+  const baseUrlNoticeTone = baseUrlInspection.error ? "danger" : "warning";
 
-  const submitLabel = props.checking ? "恢复登录中" : props.busy ? "连接中" : "登录";
+  const submitLabel = props.checking ? t("login.checking") : props.busy ? t("login.connecting") : t("login.submit");
   const disabled = props.busy || props.checking;
 
   return (
-    <div className="login-shell" aria-label="登录页面">
+    <div className="login-shell" aria-label={t("login.page")}>
       <section className="login-brand-panel" aria-hidden="true">
         <div className="login-brand-copy">
           <span>CODEX</span>
@@ -30,7 +35,7 @@ export function LoginPage(props: LoginPageProps) {
       <main className="login-form-panel">
         <form
           className="login-card"
-          aria-label="登录表单"
+          aria-label={t("login.form")}
           onSubmit={(event) => {
             event.preventDefault();
             if (!disabled) {
@@ -43,11 +48,11 @@ export function LoginPage(props: LoginPageProps) {
           </div>
           <header className="login-card__header">
             <p className="panel-heading__eyebrow">CPA Codex Tools</p>
-            <h1>登录 Codex 额度监控台</h1>
+            <h1>{t("login.title")}</h1>
           </header>
 
           <label className="login-field">
-            <span>CPA 管理地址</span>
+            <span>{t("login.baseUrl")}</span>
             <span className="command-field login-field__control">
               <span className="material-symbols-outlined" aria-hidden="true">link</span>
               <input
@@ -59,10 +64,18 @@ export function LoginPage(props: LoginPageProps) {
                 autoComplete="url"
               />
             </span>
+            {baseUrlNotice ? (
+              <span className={`config-url-notice config-url-notice--${baseUrlNoticeTone}`} role="status">
+                <span className="material-symbols-outlined" aria-hidden="true">
+                  {baseUrlInspection.error ? "error" : "warning"}
+                </span>
+                <span>{baseUrlNotice}</span>
+              </span>
+            ) : null}
           </label>
 
           <label className="login-field">
-            <span>管理密钥</span>
+            <span>{t("login.key")}</span>
             <span className="command-field login-field__control">
               <span className="material-symbols-outlined" aria-hidden="true">key</span>
               <input
@@ -71,7 +84,7 @@ export function LoginPage(props: LoginPageProps) {
                 value={props.config.managementKey}
                 disabled={disabled}
                 onChange={(event) => props.onConfigChange("managementKey", event.target.value)}
-                placeholder="输入管理密钥"
+                placeholder={t("login.keyPlaceholder")}
                 autoComplete="current-password"
                 autoFocus
               />
@@ -80,8 +93,8 @@ export function LoginPage(props: LoginPageProps) {
                 className="login-field__icon-button"
                 onClick={() => setShowKey((current) => !current)}
                 disabled={disabled}
-                aria-label={showKey ? "隐藏管理密钥" : "显示管理密钥"}
-                title={showKey ? "隐藏管理密钥" : "显示管理密钥"}
+                aria-label={showKey ? t("login.hideKey") : t("login.showKey")}
+                title={showKey ? t("login.hideKey") : t("login.showKey")}
               >
                 <span className="material-symbols-outlined" aria-hidden="true">
                   {showKey ? "visibility_off" : "visibility"}
@@ -97,7 +110,7 @@ export function LoginPage(props: LoginPageProps) {
               disabled={disabled}
               onChange={(event) => setRememberLogin(event.target.checked)}
             />
-            <span>记住本次登录</span>
+            <span>{t("login.remember")}</span>
           </label>
 
           <button type="submit" className="command-button command-button--primary login-submit" disabled={disabled}>

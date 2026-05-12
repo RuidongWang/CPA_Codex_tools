@@ -4,14 +4,18 @@
 
 本仓库只包含客户端工具，不包含 CPA 服务端，也不包含任何账号配置文件。使用前需要先部署可用的 CPA，并在 CPA 中导入 Codex 账号。
 
+面向日常操作的完整说明见 [使用手册](docs/USER_MANUAL.md)。
+
 ## 目录
 
 - [功能概览](#功能概览)
+- [使用手册](docs/USER_MANUAL.md)
 - [界面预览](#界面预览)
 - [快速开始](#快速开始)
 - [Web 端](#web-端)
 - [登录与管理密钥](#登录与管理密钥)
 - [Docker Compose](#docker-compose)
+- [敏感数据与导出](#敏感数据与导出)
 - [批量生成优先级](#批量生成优先级)
 - [Codex OAuth登录](#codex-oauth登录)
 - [数据与缓存](#数据与缓存)
@@ -25,7 +29,7 @@
 - 提供登录页，通过 CPA 管理地址和管理密钥验证后进入控制台。
 - 支持批量查询、单账号查询、批量下载账号配置和批量同步优先级。
 - 支持 Keeper 可视化监控，维护策略参考 [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)，可按策略演练或执行维护，也可在账号列表中选中指定账号后直接设置禁用、刷新证书或删除证书。
-- 支持 Codex OAuth 登录辅助页面，可为失效账号发起 CPA OAuth、导入 Hotmail 账号池、获取邮箱验证码、提交 OAuth 回调 URL 并检查登录状态。
+- 支持 Codex OAuth 登录辅助页面，可为失效账号发起 CPA OAuth、导入 Hotmail 账号池、获取邮箱验证码、提交 OAuth 回调 URL 并检查登录状态；可选安装 Chrome/Edge 扩展辅助单账号自动登录。
 - 支持大账号量列表虚拟滚动，移动端自动切换为账号卡片。
 - 查询到的额度快照会持久化到 IndexedDB，再次加载账号列表时自动回填。
 - 表格中的 `额度更新时间` 取自接口 body 中 `rate_limit.primary_window.reset_at` 对应的下一次刷新时间。
@@ -99,7 +103,7 @@ Web 端位于 `web/`，由 React、TypeScript 和 Vite 构建。
 - CPA 或前置反向代理需要允许本地 Web 页面跨域访问。
 - 浏览器下载账号配置 JSON，不需要配置本地备份路径。
 - Keeper 页面支持策略配置、账号列表检索和选中账号直操作。维护策略支持禁用阈值、过期阈值、维护并发和维护时自动刷新临期证书。
-- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务。
+- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务；管理密钥、Hotmail 密码和可选保存的 Hotmail Token 会先加密再写入浏览器存储。
 
 环境要求：
 
@@ -135,7 +139,7 @@ web/web-server.config.ts
 
 ## 登录与管理密钥
 
-当前登录逻辑是前端登录态加 CPA Management API 管理密钥验证，不包含独立的用户账号体系。
+当前登录逻辑是前端登录态加 CPA Management API 管理配置，不包含独立的用户账号体系。
 
 登录流程：
 
@@ -144,11 +148,12 @@ web/web-server.config.ts
 3. 如果本地已有地址和密钥，会自动调用账号列表接口验证。
 4. 验证成功后进入控制台，并加载账号列表。
 5. 验证失败会回到登录页，并展示自动登录失败原因。
-6. 手动登录时，登录页提交 CPA 管理地址和管理密钥，同样通过拉取账号列表验证密钥是否有效。
+6. 手动登录时，登录页只保存本次 CPA 管理地址和管理密钥并进入控制台，不自动拉取账号列表。
+7. 进入控制台后，点击 `加载账号` 才会请求账号列表并验证当前管理配置是否可用。
 
 登录页的“记住本次登录”默认开启：
 
-- 开启时，会把 CPA 管理地址和管理密钥保存到当前浏览器本地配置中，下次打开页面会自动验证并进入控制台。
+- 开启时，会把 CPA 管理地址和加密后的管理密钥保存到当前浏览器本地配置中，下次打开页面会自动验证并进入控制台。
 - 关闭时，只保留本次页面会话中的管理密钥；刷新页面或重新打开后需要重新输入管理密钥。
 
 右上角“退出登录”会清空本地保存的管理密钥，重置页面状态并回到登录页。
@@ -202,6 +207,32 @@ docker compose down
 
 Compose 只负责启动本项目的 Web 环境，不包含 CPA 服务端。
 
+Web 服务启动时会生成运行时加密密钥，并写入 `runtime-secret.js` 供浏览器端解密本地敏感配置。Docker Compose 使用 `/runtime/vault-secret` 持久化该密钥；不要在升级或重启服务时删除对应 volume，否则旧浏览器缓存里的加密管理密钥、Hotmail 密码和 Token 将无法解密。不使用 Docker 时，`npm run web:dev` 和 `npm run web:build` 会在 `web/.runtime/vault-secret` 生成本地密钥，该目录已加入 `.gitignore`。
+
+## 敏感数据与导出
+
+本项目是浏览器本地工具，不提供服务端密钥库。敏感字段会先在浏览器端加密，再写入当前浏览器配置；同一个浏览器页面仍可以在用户确认后导出明文，便于人工备份和迁移。
+
+加密保存的字段：
+
+- CPA 管理密钥：仅在登录页勾选 `记住本次登录` 时保存。
+- Hotmail 密码：导入 Hotmail 账号池后保存，用于刷新页面后继续自动登录流程。
+- Hotmail refresh token：默认不保存；只有勾选 `本地持久保存 Hotmail Token` 时保存。
+
+运行时加密密钥来源：
+
+- Docker Compose：保存在 `/runtime/vault-secret`，由 `web_runtime_secret`、`web_dev_runtime_secret` 或 `web_preview_runtime_secret` volume 持久化。
+- Node.js 本地运行：保存在 `web/.runtime/vault-secret`。
+- 非标准静态打开场景：如果没有 `runtime-secret.js`，浏览器会生成当前 profile 内的 fallback 密钥。
+
+导出敏感配置：
+
+1. 打开右上角设置。
+2. 在 `本地数据` 中点击 `导出敏感配置`。
+3. 确认风险提示后，浏览器会下载 `cpa-codex-sensitive-export-YYYYMMDD-HHmmss.json`。
+
+导出的 JSON 是明文，包含 CPA 地址、管理密钥、Hotmail 邮箱、密码、Client ID 和已保存的 Hotmail Token。它适合放入受保护的离线备份或迁移到另一台可信机器，不应提交到仓库、日志、聊天窗口或工单系统。
+
 ## 批量生成优先级
 
 批量生成优先级入口位于主界面工具条的“批量设置优先级”。它只生成本地草稿，不会直接写入 CPA；确认列表中的“未同步”结果无误后，再点击“同步到远端”提交。
@@ -228,7 +259,7 @@ Compose 只负责启动本项目的 Web 环境，不包含 CPA 服务端。
 
 ## Codex OAuth登录
 
-左侧 `OAuth` 页面用于辅助失效账号重新完成 CPA Codex OAuth 登录。当前实现采用 API 辅助链路：生成 OAuth 链接、获取 Hotmail 验证码、提交 OAuth 回调 URL、检查 CPA 登录状态，并在登录成功后检测目标账号额度；OpenAI 登录页仍由浏览器打开并由用户完成验证码填写和授权确认。
+左侧 `OAuth` 页面用于辅助失效账号重新完成 CPA Codex OAuth 登录。当前实现采用 API 辅助链路：生成 OAuth 链接、获取 Hotmail 验证码、提交 OAuth 回调 URL、检查 CPA 登录状态，并在登录成功后检测目标账号额度。未安装扩展时，OpenAI 登录页仍由浏览器打开并由用户完成验证码填写和授权确认。
 
 失效账号来源只看已经产生的异常证据：
 
@@ -254,20 +285,60 @@ alice@hotmail.com----password----client-id----refresh-token
 7. 点击 `检查登录状态`。如果 CPA 返回成功，页面会先刷新账号列表，再按同邮箱优先匹配最新账号执行一次额度查询。
 8. 如果额度查询结果不是 `error`，该账号会从 `失效账号` 列表恢复为正常；如果仍是 `error`，会继续保留在失效账号列表中。
 
+### Codex OAuth 批量恢复
+
+`OAuth` 页面顶部的 `OAuth 批量队列` 用于把失效账号批量交给浏览器扩展恢复。队列来源仍然只取上述两类异常证据：额度查询后状态为 `error` 的账号，以及 Keeper 刷新证书失败的账号。
+
+队列按钮含义：
+
+- `全部失效账号生成队列`：把当前识别出的全部失效账号入队。
+- `勾选账号生成队列`：只把账号表格中勾选的账号入队。
+- `当前筛选结果生成队列`：按账号表格当前筛选结果入队。
+- `清空队列`：清除本地 OAuth 批量队列。
+
+队列统计里 `callback 已提交` 和 `OAuth success` 不是同一个状态。`callback 已提交` 只表示扩展已经捕获本地 OAuth callback URL，并把它提交给 CPA；这一步可能还在等待 CPA 后验检查，也可能随后失败。`OAuth success` 只统计 `job.oauthStatus === 'success'` 的任务，表示 CPA 的 OAuth 登录状态检查已经返回成功。
+
+队列列表只展示邮箱、Hotmail 匹配邮箱、任务状态、尝试次数、最近错误、OAuth 后验状态和更新时间；不会展示 Hotmail 密码、refresh token 或验证码。
+
+### Chrome/Edge 自动登录扩展
+
+仓库提供可选扩展：`browser-extension/codex-oauth-auto-login/`。它用于在你已经打开本项目 `OAuth` 页面后，辅助完成单账号 OAuth 重登或处理页面顶部的批量恢复队列。
+
+安装方式：
+
+1. 打开 Chrome/Edge 扩展管理页。
+2. 开启开发者模式。
+3. 选择“加载已解压的扩展”。
+4. 选择 `browser-extension/codex-oauth-auto-login` 目录。
+
+使用方式：
+
+1. 在本项目左侧进入 `OAuth` 页面。
+2. 选择一个失效账号，并确认 `Hotmail 账号池` 中存在同邮箱账号。
+3. 点击浏览器工具栏里的 `CPA Codex OAuth` 扩展，浏览器会打开侧边栏而不是浮动弹窗。
+4. 点击 `读取账号池`，侧边栏会从当前本地项目页面读取全部失效账号，以及 Hotmail 账号池中的邮箱、密码、Client ID 和 Token 是否存在。
+5. 按需调整侧边栏 `自动化参数`，其中 `任务间隔(秒)` 会在一个任务结束后、下一个任务开始前等待，用来放慢连续 OAuth state 创建。
+6. 点击 `开始登录`。
+
+扩展会通过页面桥接发起 OAuth、打开 OpenAI 授权页、填写邮箱并自动点击继续，然后按 OpenAI 页面实际填写的邮箱请求本项目获取 Hotmail 验证码、填写验证码、捕获本地 OAuth 回调 URL 并交回本项目提交。遇到 CAPTCHA、MFA、手机号验证、安全检查或无法识别的页面时，扩展会停止并提示你手动处理。
+
 注意：
 
-- Hotmail 账号池会保存在浏览器 `localStorage` 的运行配置中，其中包含 `clientId` 和 `refreshToken`，只建议在可信本机使用。
+- 扩展需要能访问本地 CPA Web 页和 OpenAI 登录页。manifest 里声明了 `tabs`、`activeTab`、`scripting`、`webNavigation`、`storage`、`sidePanel`、`cookies`、`browsingData` 权限，以及 `http://127.0.0.1/*`、`http://localhost/*`、`https://auth.openai.com/*`、`https://auth0.openai.com/*`、`https://accounts.openai.com/*` 等 host 权限，用于打开/识别登录页、清理会话、读取本地页面桥接状态并提交 callback。
+- 使用扩展前必须保留一个本地 CPA tab，地址应为 `http://127.0.0.1:*` 或 `http://localhost:*`，并停留在本项目 `OAuth` 页面。扩展侧边栏从这个 tab 读取失效账号、Hotmail 账号池、队列和本地桥接 API；只在 OpenAI 登录页或其它网站打开侧边栏无法读取本地队列。
+- 侧边栏为调试和自动登录准备，会显示 Hotmail 密码；当前实现只按需读取并显示，不写入扩展存储。
+- Hotmail 账号池中的邮箱、Client ID 和密码会加密保存在浏览器本地，方便刷新页面后继续使用扩展自动登录。`refreshToken` 默认不持久保存；只有勾选 `本地持久保存 Hotmail Token` 时，浏览器本地配置才会加密保存 Hotmail Token。只建议在可信本机启用该选项。
 - OAuth 登录成功后的恢复判断以额度查询结果为准，不只依赖 CPA 登录状态成功。
-- 普通 Web 页面不能像浏览器扩展一样跨域控制 `auth.openai.com` DOM，因此本页面不会自动填写验证码或点击 OpenAI 授权按钮。
+- 普通 Web 页面不能跨域控制 `auth.openai.com` DOM；自动填写验证码和点击授权按钮需要安装上述浏览器扩展。
 
 ## 数据与缓存
 
 Web 端本地缓存使用两类浏览器存储：
 
-- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存管理密钥。
+- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存加密后的管理密钥。
 - `IndexedDB` 保存账号列表缓存和额度快照，用于页面刷新或重新加载账号列表后的自动回填。
 
-设置面板中的“清空本地缓存”会清除以上 Web 端缓存。浏览器下载的账号配置 JSON 不归本项目管理。
+本地敏感字段使用运行时密钥加密，包括管理密钥、Hotmail 密码和可选保存的 Hotmail Token。设置面板中的 `导出敏感配置` 会下载明文 JSON，内容包含这些敏感字段，只应保存在可信位置。设置面板中的“清空本地缓存”会清除以上 Web 端缓存和浏览器 fallback 加密密钥。浏览器下载的账号配置 JSON 和敏感配置导出文件不归本项目管理。
 
 本地优先级草稿只存在当前页面内存中。刷新页面后草稿会消失，已同步到 CPA 的远端优先级不受影响。
 
@@ -312,6 +383,13 @@ cd web
 npm run web:build
 ```
 
+单独生成或复用运行时密钥：
+
+```bash
+cd web
+npm run runtime:secret
+```
+
 检查 Compose 配置：
 
 ```bash
@@ -326,8 +404,10 @@ docker compose config
 ├─ README.md
 ├─ CHANGELOG.md
 ├─ docs/
+│  ├─ USER_MANUAL.md
 │  └─ readme/
 └─ web/
+   ├─ scripts/
    ├─ package.json
    ├─ package-lock.json
    ├─ web-server.config.ts
@@ -339,6 +419,8 @@ docker compose config
 
 - `web/src/App.tsx` 负责主状态机、加载、查询、下载和同步流程。
 - `web/src/lib/api.ts` 负责浏览器端 CPA 请求、数据归一化、下载、Keeper 维护和额度快照持久化。
+- `web/src/lib/crypto-vault.ts` 负责浏览器端敏感字段加密、解密和运行时密钥读取。
+- `web/scripts/write-runtime-secret.mjs` 负责生成部署时的 `runtime-secret.js`。
 - `web/src/components/` 放账号表格、工具条、设置面板、进度面板、Keeper 面板、Codex OAuth 面板和优先级弹层。
 - `docker-compose.yml` 提供本地 Web 开发和预览服务。
 

@@ -19,6 +19,12 @@ export const README_DEMO_CONFIG: RuntimeConfig = {
   oauthSettings: {
     hotmailHelperUrl: "http://127.0.0.1:17373",
     hotmailAccounts: [],
+    rememberHotmailTokens: false,
+    importedInvalidAccountEmails: [],
+  },
+  uiSettings: {
+    themeMode: "dark",
+    language: "zh",
   },
 };
 

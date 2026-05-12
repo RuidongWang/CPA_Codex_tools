@@ -1,4 +1,4 @@
-import { DEFAULT_CPA_BASE_URL } from "../lib/api";
+import { DEFAULT_CPA_BASE_URL, inspectManagementBaseUrl } from "../lib/api";
 import type { RuntimeConfig } from "../types";
 
 interface ConnectionConfigPanelProps {
@@ -10,6 +10,10 @@ interface ConnectionConfigPanelProps {
 }
 
 export function ConnectionConfigPanel(props: ConnectionConfigPanelProps) {
+  const baseUrlInspection = inspectManagementBaseUrl(props.config.cpaBaseUrl);
+  const baseUrlNotice = baseUrlInspection.error || baseUrlInspection.warning;
+  const baseUrlNoticeTone = baseUrlInspection.error ? "danger" : "warning";
+
   return (
     <section className="config-panel" aria-label="连接配置">
       <header className="config-panel__header">
@@ -17,16 +21,26 @@ export function ConnectionConfigPanel(props: ConnectionConfigPanelProps) {
         <h2>连接配置</h2>
       </header>
       <div className="config-panel__fields">
-        <label className="command-field config-field">
-          <span className="material-symbols-outlined">link</span>
-          <input
-            className="command-field__input"
-            value={props.config.cpaBaseUrl}
-            disabled={props.busy || props.saving}
-            onChange={(event) => props.onConfigChange("cpaBaseUrl", event.target.value)}
-            placeholder={DEFAULT_CPA_BASE_URL}
-          />
-        </label>
+        <div className="config-field-stack">
+          <label className="command-field config-field">
+            <span className="material-symbols-outlined">link</span>
+            <input
+              className="command-field__input"
+              value={props.config.cpaBaseUrl}
+              disabled={props.busy || props.saving}
+              onChange={(event) => props.onConfigChange("cpaBaseUrl", event.target.value)}
+              placeholder={DEFAULT_CPA_BASE_URL}
+            />
+          </label>
+          {baseUrlNotice ? (
+            <div className={`config-url-notice config-url-notice--${baseUrlNoticeTone}`} role="status">
+              <span className="material-symbols-outlined" aria-hidden="true">
+                {baseUrlInspection.error ? "error" : "warning"}
+              </span>
+              <span>{baseUrlNotice}</span>
+            </div>
+          ) : null}
+        </div>
         <label className="command-field config-field">
           <span className="material-symbols-outlined">key</span>
           <input

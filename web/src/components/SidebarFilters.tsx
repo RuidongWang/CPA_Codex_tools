@@ -1,3 +1,5 @@
+import { useI18n, type I18nKey } from "../lib/i18n";
+
 export type SidebarPage = "quota" | "config" | "keeper" | "oauth";
 
 interface SidebarFiltersProps {
@@ -13,39 +15,44 @@ const PAGE_NAV_ITEMS: Array<{ key: SidebarPage; label: string; icon: string }> =
   { key: "oauth", label: "OAuth", icon: "key" },
 ];
 
-function pageAriaLabel(page: SidebarPage): string {
+function pageLabelKey(page: SidebarPage): I18nKey {
+  return `sidebar.${page}` as I18nKey;
+}
+
+function pageAriaLabelKey(page: SidebarPage): I18nKey {
   if (page === "quota") {
-    return "额度页面";
+    return "sidebar.quotaAria";
   }
   if (page === "config") {
-    return "配置页面";
+    return "sidebar.configAria";
   }
   if (page === "keeper") {
-    return "Keeper页面";
+    return "sidebar.keeperAria";
   }
-  return "Codex OAuth登录页面";
+  return "sidebar.oauthAria";
 }
 
 export function SidebarFilters(props: SidebarFiltersProps) {
+  const { t } = useI18n();
   return (
     <aside className="rail">
       <div className="rail__brand" aria-hidden="true">
         <span className="material-symbols-outlined">monitoring</span>
         <span className="rail__brand-mark">CPA OPS</span>
       </div>
-      <nav className="rail__pages" aria-label="页面导航">
+      <nav className="rail__pages" aria-label={t("sidebar.nav")}>
         {PAGE_NAV_ITEMS.map((item) => {
           const active = props.activePage === item.key;
           return (
             <button
               key={item.key}
               type="button"
-              aria-label={pageAriaLabel(item.key)}
+              aria-label={t(pageAriaLabelKey(item.key))}
               className={active ? "rail-button rail-button--active" : "rail-button"}
               onClick={() => props.onPageChange(item.key)}
             >
               <span className="material-symbols-outlined">{item.icon}</span>
-              <span className="rail-button__label">{item.label}</span>
+              <span className="rail-button__label">{t(pageLabelKey(item.key))}</span>
               <span className="rail-button__count">{props.accountCount}</span>
             </button>
           );

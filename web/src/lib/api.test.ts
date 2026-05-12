@@ -1,4 +1,11 @@
-import { DEFAULT_KEEPER_SETTINGS, DEFAULT_QUERY_CONCURRENCY, normalizePayload, normalizeRuntimeConfig } from "./api";
+import {
+  DEFAULT_KEEPER_SETTINGS,
+  DEFAULT_QUERY_CONCURRENCY,
+  DEFAULT_UI_SETTINGS,
+  inspectManagementBaseUrl,
+  normalizePayload,
+  normalizeRuntimeConfig,
+} from "./api";
 
 // 先锁住后端 payload 的最小契约，避免界面层直接依赖松散原始结构。
 describe("normalizePayload", () => {
@@ -109,7 +116,18 @@ describe("normalizeRuntimeConfig", () => {
     expect(config.oauthSettings).toEqual({
       hotmailHelperUrl: "http://127.0.0.1:17373",
       hotmailAccounts: [],
+      rememberHotmailTokens: true,
+      importedInvalidAccountEmails: [],
     });
+    expect(config.uiSettings).toEqual(DEFAULT_UI_SETTINGS);
+  });
+
+  it("normalizes UI settings and rejects unsupported values", () => {
+    expect(normalizeRuntimeConfig({ uiSettings: { themeMode: "light", language: "en" } }).uiSettings).toEqual({
+      themeMode: "light",
+      language: "en",
+    });
+    expect(normalizeRuntimeConfig({ uiSettings: { themeMode: "sepia", language: "jp" } as never }).uiSettings).toEqual(DEFAULT_UI_SETTINGS);
   });
 
   it("normalizes keeper settings into safe bounds", () => {
@@ -147,5 +165,35 @@ describe("normalizeRuntimeConfig", () => {
       team: { minPriority: 10, maxPriority: 20 },
       free: { minPriority: 1, maxPriority: 20 },
     });
+  });
+});
+
+describe("inspectManagementBaseUrl", () => {
+  it("rejects invalid URL syntax and embedded credentials", () => {
+    expect(inspectManagementBaseUrl("https://")).toEqual(
+      expect.objectContaining({
+        valid: false,
+        warning: expect.stringContaining("CPA 地址格式无效"),
+      }),
+    );
+    expect(inspectManagementBaseUrl("https://user:pass@cpa.example/")).toEqual(
+      expect.objectContaining({
+        valid: false,
+        warning: expect.stringContaining("不能包含用户名或密码"),
+      }),
+    );
+  });
+
+  it("rejects non-http protocols before management requests are built", () => {
+    const safety = inspectManagementBaseUrl("javascript:alert(1)");
+
+    expect(safety.valid).toBe(false);
+    expect(safety.warning).toContain("仅支持 HTTP 或 HTTPS");
+  });
+
+  it("warns when a management key would be sent over non-local HTTP", () => {
+    expect(inspectManagementBaseUrl("http://134.185.91.116:8317").warning).toContain("非 HTTPS");
+    expect(inspectManagementBaseUrl("http://127.0.0.1:8317").warning).toBe("");
+    expect(inspectManagementBaseUrl("https://cpa.example/").warning).toBe("");
   });
 });

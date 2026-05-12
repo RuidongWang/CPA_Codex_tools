@@ -1,5 +1,7 @@
 // 这些类型对应 Web 端统一 payload，先把 CPA 响应到界面的契约锁住。
 export type PriorityPlanKey = "team" | "plus" | "free" | "pro 5x" | "pro 20x" | "unknown";
+export type ThemeMode = "system" | "light" | "dark";
+export type AppLanguage = "zh" | "en";
 
 export interface PriorityPlanPreview {
   key: PriorityPlanKey;
@@ -23,6 +25,12 @@ export interface RuntimeConfig {
   priorityPlanOrder: PriorityPlanKey[];
   priorityPlanRanges: PriorityPlanRangeMap;
   oauthSettings: OAuthSettings;
+  uiSettings?: UiSettings;
+}
+
+export interface UiSettings {
+  themeMode: ThemeMode;
+  language: AppLanguage;
 }
 
 export interface KeeperSettings {
@@ -50,6 +58,61 @@ export interface HotmailAccount {
 export interface OAuthSettings {
   hotmailHelperUrl: string;
   hotmailAccounts: HotmailAccount[];
+  rememberHotmailTokens: boolean;
+  importedInvalidAccountEmails: string[];
+}
+
+export type OAuthJobStatus =
+  | "queued"
+  | "session_clearing"
+  | "oauth_started"
+  | "email_submitting"
+  | "code_polling"
+  | "code_submitting"
+  | "consent_submitting"
+  | "callback_submitted"
+  | "manual_required"
+  | "failed";
+
+export type OAuthJobErrorType = "retryable" | "manual" | "fatal";
+
+export interface OAuthJob {
+  jobId: string;
+  authIndex: string;
+  accountEmail: string;
+  accountName: string;
+  planType: string;
+  hotmailId: string;
+  hotmailEmail: string;
+  status: OAuthJobStatus;
+  attempt: 0 | 1;
+  retryCount: number;
+  startedAt: string | null;
+  updatedAt: string;
+  lockedByExtension: string;
+  leaseExpiresAt: string | null;
+  state: string;
+  authUrl: string;
+  callbackUrl: string;
+  callbackSubmittedAt: string | null;
+  oauthStatus: "pending" | "success" | "error" | "";
+  oauthCheckedAt: string | null;
+  oauthError: string;
+  lastError: string;
+  lastErrorType: OAuthJobErrorType | "";
+  manualReason: string;
+  lastPageSnapshot: Record<string, unknown> | null;
+  lastCodeAt: string | null;
+  rejectedCodeFingerprints: string[];
+}
+
+export interface OAuthQueueSummary {
+  total: number;
+  queued: number;
+  running: number;
+  callbackSubmitted: number;
+  manualRequired: number;
+  failed: number;
 }
 
 export interface MetaSummary {

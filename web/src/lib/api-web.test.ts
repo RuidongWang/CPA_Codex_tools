@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  buildSensitiveConfigExport,
   clearLocalCache,
   downloadSelectedAccounts,
   fetchAccountList,
@@ -36,6 +37,8 @@ const demoConfig: RuntimeConfig = {
   oauthSettings: {
     hotmailHelperUrl: "http://127.0.0.1:17373",
     hotmailAccounts: [],
+    rememberHotmailTokens: false,
+    importedInvalidAccountEmails: [],
   },
 };
 
@@ -360,6 +363,12 @@ describe("browser runtime api", () => {
 
   it("fetchAccountList 在浏览器里缺少 CPA 地址时直接报错", async () => {
     await expect(fetchAccountList({ ...demoConfig, cpaBaseUrl: "   " })).rejects.toThrow("请先填写 CPA 地址");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("management fetches reject unsafe CPA base URLs before network requests", async () => {
+    await expect(fetchAccountList({ ...demoConfig, cpaBaseUrl: "https://user:pass@cpa.example/" })).rejects.toThrow("不能包含用户名或密码");
+    await expect(fetchAccountList({ ...demoConfig, cpaBaseUrl: "file:///tmp/cpa" })).rejects.toThrow("仅支持 HTTP 或 HTTPS");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -732,6 +741,30 @@ describe("browser runtime api", () => {
     }));
   });
 
+  it("submitCodexOAuthCallback rejects unsafe callback URLs before fetch", async () => {
+    await expect(submitCodexOAuthCallback(demoConfig, "oauth-state-1", "")).rejects.toThrow("请粘贴 OAuth 回调 URL");
+    await expect(submitCodexOAuthCallback(demoConfig, "oauth-state-1", "notaurl")).rejects.toThrow("OAuth 回调 URL 格式无效");
+    await expect(submitCodexOAuthCallback(demoConfig, "oauth-state-1", "file:///tmp/callback?code=oauth-code&state=oauth-state-1")).rejects.toThrow(
+      "OAuth 回调 URL 仅支持 HTTP 或 HTTPS",
+    );
+    await expect(
+      submitCodexOAuthCallback(demoConfig, "oauth-state-1", "https://example.com/auth/callback?code=oauth-code&state=oauth-state-1"),
+    ).rejects.toThrow("OAuth 回调 URL 仅支持本地回调地址");
+    await expect(
+      submitCodexOAuthCallback(demoConfig, "oauth-state-1", "http://localhost:1455/other/callback?code=oauth-code&state=oauth-state-1"),
+    ).rejects.toThrow("OAuth 回调 URL 路径不支持");
+    await expect(submitCodexOAuthCallback(demoConfig, "oauth-state-1", "http://localhost:1455/auth/callback?code=oauth-code")).rejects.toThrow(
+      "OAuth 回调 URL 缺少 state",
+    );
+    await expect(
+      submitCodexOAuthCallback(demoConfig, "oauth-state-1", "http://localhost:1455/auth/callback?code=oauth-code&state=other-state"),
+    ).rejects.toThrow("OAuth 回调 URL state 不匹配");
+    await expect(submitCodexOAuthCallback(demoConfig, "oauth-state-1", "http://localhost:1455/auth/callback?state=oauth-state-1")).rejects.toThrow(
+      "OAuth 回调 URL 缺少 code 或 error",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("fetchHotmailVerificationCode 通过 CPA api-call 对接 Microsoft API 获取验证码", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
@@ -1042,7 +1075,48 @@ describe("browser runtime api", () => {
     expect(config.cpaBaseUrl).toBe("https://legacy.example/");
     expect(config.managementKey).toBe("legacy-key");
     expect(window.localStorage.getItem("cpa-quota-desk.runtime-config")).toBeNull();
-    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("legacy-key");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("legacy-key");
+    await expect(loadRuntimeConfig()).resolves.toEqual(expect.objectContaining({ managementKey: "legacy-key" }));
+  });
+
+  it("loadRuntimeConfig 保留 Hotmail 明文账号信息，不再按旧开关清理 Token", async () => {
+    window.localStorage.setItem(
+      "cpa_codex_quota_cache.runtime-config",
+      JSON.stringify({
+        ...demoConfig,
+        oauthSettings: {
+          hotmailHelperUrl: "http://127.0.0.1:17373",
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "mail-password",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              status: "authorized",
+              lastCode: "123456",
+            },
+          ],
+        },
+      }),
+    );
+
+    const config = await loadRuntimeConfig();
+    const stored = String(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config"));
+
+    expect(config.oauthSettings.rememberHotmailTokens).toBe(true);
+    expect(config.oauthSettings.hotmailAccounts).toEqual([
+      expect.objectContaining({
+        email: "a@hotmail.com",
+        password: "mail-password",
+        clientId: "client-id",
+        refreshToken: "refresh-token",
+        lastCode: undefined,
+      }),
+    ]);
+    expect(stored).toContain("mail-password");
+    expect(stored).toContain("refresh-token");
+    expect(stored).not.toContain("123456");
   });
 
   it("savePayloadCache 和 loadPayloadCache 在浏览器里使用 IndexedDB 而不是 localStorage payload", async () => {
@@ -1142,8 +1216,201 @@ describe("browser runtime api", () => {
   it("saveRuntimeConfig 使用固定缓存命名空间", async () => {
     await saveRuntimeConfig(demoConfig);
 
-    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("example-management-key");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("example-management-key");
     expect(window.localStorage.getItem("cpa-quota-desk.runtime-config")).toBeNull();
+    await expect(loadRuntimeConfig()).resolves.toEqual(expect.objectContaining({ managementKey: "example-management-key" }));
+  });
+
+  it("saveRuntimeConfig stores Hotmail account credentials in plaintext while avoiding management key persistence", async () => {
+    await saveRuntimeConfig(
+      {
+        ...demoConfig,
+        oauthSettings: {
+          hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: true,
+          importedInvalidAccountEmails: ["bad@outlook.com"],
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "hotmail-password",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              lastCode: "123456",
+              status: "authorized",
+            },
+          ],
+        },
+      },
+      { rememberManagementKey: false, rememberHotmailTokens: false },
+    );
+
+    const stored = JSON.parse(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "{}") as RuntimeConfig;
+    expect(stored.managementKey).toBe("");
+    expect(stored.oauthSettings.rememberHotmailTokens).toBe(true);
+    expect(stored.oauthSettings.hotmailAccounts).toHaveLength(1);
+    expect(stored.oauthSettings.hotmailAccounts[0]).toEqual(
+      expect.objectContaining({
+        email: "a@hotmail.com",
+        password: "hotmail-password",
+        clientId: "client-id",
+        refreshToken: "refresh-token",
+      }),
+    );
+    expect(stored.oauthSettings.importedInvalidAccountEmails).toEqual(["bad@outlook.com"]);
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("hotmail-password");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("refresh-token");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("123456");
+    await expect(loadRuntimeConfig()).resolves.toEqual(
+      expect.objectContaining({
+        managementKey: "",
+        oauthSettings: expect.objectContaining({
+          rememberHotmailTokens: true,
+          hotmailAccounts: [
+            expect.objectContaining({
+              email: "a@hotmail.com",
+              password: "hotmail-password",
+              refreshToken: "refresh-token",
+              lastCode: undefined,
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("saveRuntimeConfig encrypts management key but keeps Hotmail credentials plaintext", async () => {
+    (window as typeof window & { __CPA_CODEX_VAULT_SECRET__?: string }).__CPA_CODEX_VAULT_SECRET__ = "test-deployment-secret";
+    await saveRuntimeConfig(
+      {
+        ...demoConfig,
+        oauthSettings: {
+          hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: true,
+          importedInvalidAccountEmails: [],
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "hotmail-password",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              lastCode: "123456",
+              status: "authorized",
+            },
+          ],
+        },
+      },
+      { rememberHotmailTokens: true },
+    );
+
+    const storedText = window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "";
+    expect(storedText).not.toContain("example-management-key");
+    expect(storedText).toContain("hotmail-password");
+    expect(storedText).toContain("refresh-token");
+    expect(storedText).not.toContain("123456");
+
+    const stored = JSON.parse(storedText) as RuntimeConfig;
+    expect(stored.oauthSettings.rememberHotmailTokens).toBe(true);
+    expect(stored.oauthSettings.hotmailAccounts[0]).toEqual(
+      expect.objectContaining({
+        password: "hotmail-password",
+        refreshToken: "refresh-token",
+      }),
+    );
+
+    await expect(loadRuntimeConfig()).resolves.toEqual(
+      expect.objectContaining({
+        managementKey: "example-management-key",
+        oauthSettings: expect.objectContaining({
+          rememberHotmailTokens: true,
+          hotmailAccounts: [
+            expect.objectContaining({
+              email: "a@hotmail.com",
+              password: "hotmail-password",
+              refreshToken: "refresh-token",
+              lastCode: undefined,
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("buildSensitiveConfigExport includes decrypted sensitive fields for manual backup", () => {
+    const exported = buildSensitiveConfigExport({
+      ...demoConfig,
+      oauthSettings: {
+        ...demoConfig.oauthSettings,
+        rememberHotmailTokens: true,
+        hotmailAccounts: [
+          {
+            id: "a@hotmail.com::client-id",
+            email: "a@hotmail.com",
+            password: "hotmail-password",
+            clientId: "client-id",
+            refreshToken: "refresh-token",
+            lastCode: "123456",
+            status: "authorized",
+          },
+        ],
+      },
+    }, "2026-05-11T02:30:00.000Z");
+
+    expect(exported).toEqual({
+      schema_version: 1,
+      exported_at: "2026-05-11T02:30:00.000Z",
+      cpaBaseUrl: "https://cpa.example/",
+      managementKey: "example-management-key",
+      oauthSettings: {
+        hotmailAccounts: [
+          {
+            email: "a@hotmail.com",
+            password: "hotmail-password",
+            clientId: "client-id",
+            refreshToken: "refresh-token",
+          },
+        ],
+      },
+    });
+  });
+
+  it("loadRuntimeConfig keeps plaintext Hotmail credentials when rewriting runtime config", async () => {
+    (window as typeof window & { __CPA_CODEX_VAULT_SECRET__?: string }).__CPA_CODEX_VAULT_SECRET__ = "test-deployment-secret";
+    window.localStorage.setItem(
+      "cpa_codex_quota_cache.runtime-config",
+      JSON.stringify({
+        ...demoConfig,
+        oauthSettings: {
+          ...demoConfig.oauthSettings,
+          rememberHotmailTokens: true,
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "legacy-password",
+              clientId: "client-id",
+              refreshToken: "legacy-refresh-token",
+              lastCode: "654321",
+              status: "authorized",
+            },
+          ],
+        },
+      }),
+    );
+
+    const config = await loadRuntimeConfig();
+    expect(config.oauthSettings.hotmailAccounts[0]).toEqual(
+      expect.objectContaining({
+        password: "legacy-password",
+        refreshToken: "legacy-refresh-token",
+      }),
+    );
+
+    const storedText = window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "";
+    expect(storedText).toContain("legacy-password");
+    expect(storedText).toContain("legacy-refresh-token");
+    expect(storedText).not.toContain("654321");
   });
 
   it("clearLocalCache 会同时清掉新旧缓存命名空间", async () => {

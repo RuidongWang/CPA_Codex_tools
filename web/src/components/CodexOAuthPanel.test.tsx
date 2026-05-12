@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { CodexOAuthPanel } from "./CodexOAuthPanel";
-import type { AccountItem, OAuthSettings } from "../types";
+import type { AccountItem, OAuthJob, OAuthSettings } from "../types";
 
 function makeAccount(overrides: Partial<AccountItem> = {}): AccountItem {
   return {
@@ -23,12 +23,231 @@ function makeAccount(overrides: Partial<AccountItem> = {}): AccountItem {
   };
 }
 
-const emptySettings: OAuthSettings = {
+function makeQueueJob(overrides: Partial<OAuthJob> = {}): OAuthJob {
+  return {
+    jobId: "job-a",
+    authIndex: "idx-a",
+    accountEmail: "queue-a@outlook.com",
+    accountName: "codex-a.json",
+    planType: "free",
+    hotmailId: "queue-a@outlook.com::client-id",
+    hotmailEmail: "queue-a@outlook.com",
+    status: "queued",
+    attempt: 0,
+    retryCount: 0,
+    startedAt: null,
+    updatedAt: "2026-05-07T08:00:00Z",
+    lockedByExtension: "",
+    leaseExpiresAt: null,
+    state: "",
+    authUrl: "",
+    callbackUrl: "",
+    callbackSubmittedAt: null,
+    oauthStatus: "",
+    oauthCheckedAt: null,
+    oauthError: "",
+    lastError: "",
+    lastErrorType: "",
+    manualReason: "",
+    lastPageSnapshot: null,
+    lastCodeAt: null,
+    rejectedCodeFingerprints: [],
+    ...overrides,
+  };
+}
+
+const emptySettings: OAuthSettings & { rememberHotmailTokens: boolean } = {
   hotmailHelperUrl: "http://127.0.0.1:17373",
   hotmailAccounts: [],
+  rememberHotmailTokens: false,
+  importedInvalidAccountEmails: [],
 };
 
 describe("CodexOAuthPanel", () => {
+  it("renders queue controls and separates callback submitted from OAuth success", () => {
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+        queueJobs={[
+          makeQueueJob({ jobId: "queued", accountEmail: "queued@outlook.com", status: "queued" }),
+          makeQueueJob({ jobId: "running", accountEmail: "running@outlook.com", status: "oauth_started" }),
+          makeQueueJob({
+            jobId: "callback-pending",
+            accountEmail: "callback-pending@outlook.com",
+            status: "callback_submitted",
+            callbackSubmittedAt: "2026-05-07T08:01:00Z",
+            oauthStatus: "pending",
+          }),
+          makeQueueJob({
+            jobId: "callback-success",
+            accountEmail: "callback-success@outlook.com",
+            status: "callback_submitted",
+            callbackSubmittedAt: "2026-05-07T08:02:00Z",
+            oauthStatus: "success",
+          }),
+          makeQueueJob({ jobId: "manual", accountEmail: "manual@outlook.com", status: "manual_required", manualReason: "CAPTCHA" }),
+          makeQueueJob({ jobId: "failed", accountEmail: "failed@outlook.com", status: "failed", lastError: "授权失败", oauthStatus: "error" }),
+        ]}
+        queueSummary={{
+          total: 6,
+          queued: 1,
+          running: 1,
+          callbackSubmitted: 2,
+          manualRequired: 1,
+          failed: 1,
+        }}
+        onBuildQueue={vi.fn()}
+        onClearQueue={vi.fn()}
+      />,
+    );
+
+    const queue = screen.getByRole("region", { name: "OAuth 批量队列" });
+    expect(within(queue).getByRole("button", { name: "全部失效账号生成队列" })).toBeEnabled();
+    expect(within(queue).getByRole("button", { name: "勾选账号生成队列" })).toBeEnabled();
+    expect(within(queue).getByRole("button", { name: "当前筛选结果生成队列" })).toBeEnabled();
+    expect(within(queue).getByRole("button", { name: "清空队列" })).toBeEnabled();
+    expect(within(queue).getByLabelText("callback 已提交 2")).toBeInTheDocument();
+    expect(within(queue).getByLabelText("OAuth success 1")).toBeInTheDocument();
+    expect(within(queue).getByText("callback-pending@outlook.com")).toBeInTheDocument();
+    expect(within(queue).getByText("callback-success@outlook.com")).toBeInTheDocument();
+  });
+
+  it("places OAuth action buttons inside the status panel", () => {
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={{
+          ...emptySettings,
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "pass",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              status: "authorized",
+            },
+          ],
+        }}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const pageHeader = document.querySelector(".oauth-page__header");
+    const statusPanel = screen.getByRole("region", { name: "OAuth 状态" });
+
+    expect(pageHeader).not.toBeNull();
+    expect(within(pageHeader as HTMLElement).queryByRole("button", { name: "获取 Hotmail 验证码" })).not.toBeInTheDocument();
+    expect(within(pageHeader as HTMLElement).queryByRole("button", { name: "发起 OAuth登录" })).not.toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "获取 Hotmail 验证码" })).toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "发起 OAuth登录" })).toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "检查登录状态" })).toBeInTheDocument();
+  });
+
+  it("calls queue builders with the expected scopes", async () => {
+    const user = userEvent.setup();
+    const onBuildQueue = vi.fn();
+    const onClearQueue = vi.fn();
+
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+        queueJobs={[]}
+        queueSummary={{
+          total: 0,
+          queued: 0,
+          running: 0,
+          callbackSubmitted: 0,
+          manualRequired: 0,
+          failed: 0,
+        }}
+        onBuildQueue={onBuildQueue}
+        onClearQueue={onClearQueue}
+      />,
+    );
+
+    const queue = screen.getByRole("region", { name: "OAuth 批量队列" });
+    await user.click(within(queue).getByRole("button", { name: "全部失效账号生成队列" }));
+    await user.click(within(queue).getByRole("button", { name: "勾选账号生成队列" }));
+    await user.click(within(queue).getByRole("button", { name: "当前筛选结果生成队列" }));
+    await user.click(within(queue).getByRole("button", { name: "清空队列" }));
+
+    expect(onBuildQueue).toHaveBeenNthCalledWith(1, "all");
+    expect(onBuildQueue).toHaveBeenNthCalledWith(2, "selected");
+    expect(onBuildQueue).toHaveBeenNthCalledWith(3, "filtered");
+    expect(onClearQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render Hotmail password refresh token or verification code in the queue list", () => {
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+        queueJobs={[
+          {
+            ...makeQueueJob({
+              jobId: "secret-job",
+              accountEmail: "secret-target@outlook.com",
+              hotmailEmail: "secret-target@outlook.com",
+              callbackUrl: "http://localhost:1455/auth/callback?code=secret-oauth-code&state=oauth-state",
+              authUrl: "https://auth.openai.com/oauth?state=oauth-state",
+              status: "callback_submitted",
+            }),
+            hotmailPassword: "secret-hotmail-password",
+            refreshToken: "secret-refresh-token",
+            code: "secret-verification-code",
+          } as OAuthJob & { hotmailPassword: string; refreshToken: string; code: string },
+        ]}
+        queueSummary={{
+          total: 1,
+          queued: 0,
+          running: 0,
+          callbackSubmitted: 1,
+          manualRequired: 0,
+          failed: 0,
+        }}
+        onBuildQueue={vi.fn()}
+        onClearQueue={vi.fn()}
+      />,
+    );
+
+    const queue = screen.getByRole("region", { name: "OAuth 批量队列" });
+    expect(within(queue).getAllByText("secret-target@outlook.com").length).toBeGreaterThan(0);
+    expect(within(queue).queryByText("secret-hotmail-password")).not.toBeInTheDocument();
+    expect(within(queue).queryByText("secret-refresh-token")).not.toBeInTheDocument();
+    expect(within(queue).queryByText("secret-verification-code")).not.toBeInTheDocument();
+    expect(within(queue).queryByText(/secret-oauth-code/)).not.toBeInTheDocument();
+  });
+
   it("does not fall back to all accounts when no invalid evidence exists", () => {
     render(
       <CodexOAuthPanel
@@ -102,6 +321,41 @@ describe("CodexOAuthPanel", () => {
     expect(within(reloginAccounts).queryByText("normal-disabled@outlook.com")).not.toBeInTheDocument();
   });
 
+  it("imports invalid account emails in bulk and lists matched accounts", async () => {
+    const user = userEvent.setup();
+    const onImportedInvalidAccountEmailsChange = vi.fn();
+
+    render(
+      <CodexOAuthPanel
+        items={[
+          makeAccount({ email: "normal@outlook.com", auth_index: "idx-normal", status: "healthy", error: "", last_query_at: null }),
+          makeAccount({ email: "other@outlook.com", auth_index: "idx-other", status: "healthy", error: "", last_query_at: null }),
+        ]}
+        importedInvalidAccountEmails={["Normal@Outlook.com", "missing@outlook.com"]}
+        onImportedInvalidAccountEmailsChange={onImportedInvalidAccountEmailsChange}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const reloginAccounts = screen.getByRole("region", { name: "失效账号" });
+    expect(within(reloginAccounts).getByText("normal@outlook.com")).toBeInTheDocument();
+    expect(within(reloginAccounts).getByText("失效账号 · free")).toBeInTheDocument();
+    expect(within(reloginAccounts).queryByText("other@outlook.com")).not.toBeInTheDocument();
+    expect(within(reloginAccounts).getByText("导入 2 个邮箱，匹配 1 个账号")).toBeInTheDocument();
+
+    await user.clear(within(reloginAccounts).getByLabelText("批量导入失效账号邮箱"));
+    await user.type(within(reloginAccounts).getByLabelText("批量导入失效账号邮箱"), "other@outlook.com, NORMAL@outlook.com other@outlook.com");
+
+    expect(onImportedInvalidAccountEmailsChange).toHaveBeenLastCalledWith(["other@outlook.com", "normal@outlook.com"]);
+  });
+
   it("imports hotmail accounts in reference format and saves them into settings", async () => {
     const user = userEvent.setup();
     const onSettingsChange = vi.fn();
@@ -136,6 +390,28 @@ describe("CodexOAuthPanel", () => {
         }),
       ],
     }));
+  });
+
+  it("shows that Hotmail credentials are persisted locally in plaintext", async () => {
+    const onSettingsChange = vi.fn();
+
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={emptySettings}
+        ready
+        onSettingsChange={onSettingsChange}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("checkbox", { name: "本地持久保存 Hotmail Token" })).not.toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Hotmail 账号信息会以明文保存在本地浏览器中");
+    expect(onSettingsChange).not.toHaveBeenCalled();
   });
 
   it("starts OAuth, fetches hotmail code, and checks CPA status", async () => {
@@ -173,6 +449,8 @@ describe("CodexOAuthPanel", () => {
         items={[makeAccount()]}
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "alice@hotmail.com::client-id",
@@ -201,18 +479,6 @@ describe("CodexOAuthPanel", () => {
     expect(openSpy).toHaveBeenCalledWith("https://auth.openai.com/oauth?state=oauth-state", "_blank", "noopener,noreferrer");
     expect(await screen.findByText("oauth-state")).toBeInTheDocument();
 
-    await user.type(
-      screen.getByLabelText("OAuth 回调 URL"),
-      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
-    );
-    await user.click(screen.getByRole("button", { name: "提交回调 URL" }));
-
-    expect(onSubmitOAuthCallback).toHaveBeenCalledWith(
-      "oauth-state",
-      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
-    );
-    expect(await screen.findByText("回调 URL 已提交")).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "获取 Hotmail 验证码" }));
 
     expect(onFetchHotmailCode).toHaveBeenCalledWith(
@@ -226,10 +492,22 @@ describe("CodexOAuthPanel", () => {
           email: "a@hotmail.com",
           refreshToken: "next-refresh-token",
           status: "authorized",
-          lastCode: "123456",
         }),
       ],
     }));
+    expect(JSON.stringify(onSettingsChange.mock.calls.at(-1)?.[0])).not.toContain("123456");
+
+    await user.type(
+      screen.getByLabelText("OAuth 回调 URL"),
+      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
+    );
+    await user.click(screen.getByRole("button", { name: "提交回调 URL" }));
+
+    expect(onSubmitOAuthCallback).toHaveBeenCalledWith(
+      "oauth-state",
+      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
+    );
+    expect(await screen.findByText("回调 URL 已提交")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "检查登录状态" }));
 
@@ -238,6 +516,190 @@ describe("CodexOAuthPanel", () => {
     });
     const statusRegion = screen.getByRole("region", { name: "OAuth 状态" });
     expect(within(statusRegion).getByText("认证成功")).toBeInTheDocument();
+  });
+
+  it("removes the selected invalid account from the local list after callback submit succeeds", async () => {
+    const user = userEvent.setup();
+    const onStartOAuth = vi.fn().mockResolvedValue({
+      authUrl: "https://auth.openai.com/oauth?state=oauth-state",
+      state: "oauth-state",
+      raw: {},
+    });
+    const onSubmitOAuthCallback = vi.fn().mockResolvedValue({
+      state: "oauth-state",
+      status: "pending",
+      message: "回调 URL 已提交",
+      raw: {},
+    });
+    vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(
+      <CodexOAuthPanel
+        items={[
+          makeAccount({ email: "submitted@outlook.com", auth_index: "idx-submitted" }),
+          makeAccount({ email: "next@outlook.com", auth_index: "idx-next" }),
+        ]}
+        settings={emptySettings}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={onStartOAuth}
+        onSubmitOAuthCallback={onSubmitOAuthCallback}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const reloginAccounts = screen.getByRole("region", { name: "失效账号" });
+    await user.click(within(reloginAccounts).getByRole("radio", { name: /submitted@outlook.com/ }));
+    await user.click(screen.getByRole("button", { name: "发起 OAuth登录" }));
+    await user.type(
+      await screen.findByLabelText("OAuth 回调 URL"),
+      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
+    );
+    await user.click(screen.getByRole("button", { name: "提交回调 URL" }));
+
+    await waitFor(() => {
+      expect(within(reloginAccounts).queryByText("submitted@outlook.com")).not.toBeInTheDocument();
+    });
+    expect(within(reloginAccounts).getByText("next@outlook.com")).toBeInTheDocument();
+    expect(onSubmitOAuthCallback).toHaveBeenCalledWith(
+      "oauth-state",
+      "http://localhost:1455/auth/callback?code=oauth-code&state=oauth-state",
+    );
+  });
+
+  it("copies the target account and latest verification code from the OAuth status panel", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const onStartOAuth = vi.fn().mockResolvedValue({
+      authUrl: "https://auth.openai.com/oauth?state=oauth-state",
+      state: "oauth-state",
+      raw: {},
+    });
+    const onFetchHotmailCode = vi.fn().mockResolvedValue({
+      code: "157526",
+      nextRefreshToken: "next-refresh-token",
+      transport: "graph",
+      raw: {},
+    });
+    vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount({ email: "copy-target@outlook.com", auth_index: "idx-copy" })]}
+        settings={{
+          hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
+          hotmailAccounts: [
+            {
+              id: "copy-target@outlook.com::client-id",
+              email: "copy-target@outlook.com",
+              password: "pass",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              status: "authorized",
+            },
+          ],
+        }}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={onStartOAuth}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={onFetchHotmailCode}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "发起 OAuth登录" }));
+    await user.click(screen.getByRole("button", { name: "复制目标账号" }));
+    await user.click(screen.getByRole("button", { name: "获取 Hotmail 验证码" }));
+    await screen.findByText("157526");
+    await user.click(screen.getByRole("button", { name: "复制验证码" }));
+
+    expect(writeText).toHaveBeenCalledWith("copy-target@outlook.com");
+    expect(writeText).toHaveBeenCalledWith("157526");
+  });
+
+  it("links the invalid account, matching Hotmail account, and OAuth status when switching accounts", async () => {
+    const user = userEvent.setup();
+    const onStartOAuth = vi.fn().mockResolvedValue({
+      authUrl: "https://auth.openai.com/oauth?state=brady-state",
+      state: "brady-state",
+      raw: {},
+    });
+    const onFetchHotmailCode = vi.fn().mockResolvedValue({
+      code: "744357",
+      nextRefreshToken: "brady-next-refresh-token",
+      transport: "graph",
+      raw: {},
+    });
+    vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(
+      <CodexOAuthPanel
+        items={[
+          makeAccount({ email: "brady@outlook.com", auth_index: "idx-brady" }),
+          makeAccount({ email: "brooke@outlook.com", auth_index: "idx-brooke" }),
+        ]}
+        settings={{
+          hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
+          hotmailAccounts: [
+            {
+              id: "brady@outlook.com::client-brady",
+              email: "brady@outlook.com",
+              password: "pass",
+              clientId: "client-brady",
+              refreshToken: "brady-refresh-token",
+              status: "authorized",
+            },
+            {
+              id: "brooke@outlook.com::client-brooke",
+              email: "brooke@outlook.com",
+              password: "pass",
+              clientId: "client-brooke",
+              refreshToken: "brooke-refresh-token",
+              status: "authorized",
+            },
+          ],
+        }}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={onStartOAuth}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={onFetchHotmailCode}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const hotmailPool = screen.getByRole("region", { name: "Hotmail 账号池" });
+    const statusRegion = screen.getByRole("region", { name: "OAuth 状态" });
+
+    await user.click(screen.getByRole("button", { name: "发起 OAuth登录" }));
+    await user.click(screen.getByRole("button", { name: "获取 Hotmail 验证码" }));
+    expect(await within(statusRegion).findByText("744357")).toBeInTheDocument();
+    expect(within(statusRegion).getByText("brady@outlook.com")).toBeInTheDocument();
+    expect(within(hotmailPool).getByText("brady@outlook.com")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /brooke@outlook.com/ }));
+
+    expect(within(hotmailPool).getByText("brooke@outlook.com")).toBeInTheDocument();
+    expect(within(hotmailPool).queryByText("brady@outlook.com")).not.toBeInTheDocument();
+    expect(within(statusRegion).getByText("brooke@outlook.com")).toBeInTheDocument();
+    expect(within(statusRegion).queryByText("brady@outlook.com")).not.toBeInTheDocument();
+    expect(within(statusRegion).getByText("未发起")).toBeInTheDocument();
+    expect(within(statusRegion).queryByText("744357")).not.toBeInTheDocument();
+    expect(within(statusRegion).getByRole("button", { name: "检查登录状态" })).toBeDisabled();
+    expect(screen.queryByLabelText("OAuth 回调 URL")).not.toBeInTheDocument();
   });
 
   it("filters and selects the Hotmail account that matches the selected CPA account email", async () => {
@@ -257,6 +719,8 @@ describe("CodexOAuthPanel", () => {
         ]}
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "first@outlook.com::client-first",
@@ -314,6 +778,8 @@ describe("CodexOAuthPanel", () => {
         ]}
         settings={{
           hotmailHelperUrl: "http://127.0.0.1:17373",
+          rememberHotmailTokens: false,
+          importedInvalidAccountEmails: [],
           hotmailAccounts: [
             {
               id: "target@outlook.com::client-main",
