@@ -4,12 +4,13 @@
 
 本仓库只包含客户端工具，不包含 CPA 服务端，也不包含任何账号配置文件。使用前需要先部署可用的 CPA，并在 CPA 中导入 Codex 账号。
 
-面向日常操作的完整说明见 [使用手册](docs/USER_MANUAL.md)。
+面向日常操作的完整说明见 [使用手册](docs/USER_MANUAL.md)，文档结构和归档规则见 [文档索引](docs/README.md)。
 
 ## 目录
 
 - [功能概览](#功能概览)
 - [使用手册](docs/USER_MANUAL.md)
+- [文档索引](docs/README.md)
 - [界面预览](#界面预览)
 - [快速开始](#快速开始)
 - [Web 端](#web-端)
@@ -22,6 +23,7 @@
 - [CPA 接口边界](#cpa-接口边界)
 - [开发与验证](#开发与验证)
 - [仓库结构](#仓库结构)
+- [参考](#参考)
 
 ## 功能概览
 
@@ -39,7 +41,7 @@
 
 ## 界面预览
 
-下面截图来自 README 演示模式，使用的都是虚构账号和虚构额度数据。
+下面截图来自 README 演示模式，使用的都是虚构账号、虚构额度和空白配置，不包含真实密钥。
 
 ### 主界面总览
 
@@ -51,7 +53,7 @@
 
 ![设置与缓存](docs/readme/settings-panel.png)
 
-配置页面和设置入口用于管理 CPA 地址、管理密钥、查询并发数、本地缓存和浏览器端下载行为。
+右上角设置入口用于管理查询并发数、Keeper 策略、本地缓存和敏感配置导出。
 
 ### 优先级设置
 
@@ -411,9 +413,13 @@ docker compose config
 ├─ docker-compose.yml
 ├─ README.md
 ├─ CHANGELOG.md
+├─ browser-extension/
+│  └─ codex-oauth-auto-login/
 ├─ docs/
+│  ├─ README.md
 │  ├─ USER_MANUAL.md
-│  └─ readme/
+│  ├─ readme/
+│  └─ archive/
 └─ web/
    ├─ scripts/
    ├─ package.json
@@ -430,6 +436,8 @@ docker compose config
 - `web/src/lib/crypto-vault.ts` 负责浏览器端敏感字段加密、解密和运行时密钥读取。
 - `web/scripts/write-runtime-secret.mjs` 负责生成部署时的 `runtime-secret.js`。
 - `web/src/components/` 放账号表格、工具条、设置面板、进度面板、Keeper 面板、Codex OAuth 面板和优先级弹层。
+- `browser-extension/codex-oauth-auto-login/` 放 Chrome/Edge 自动登录扩展。
+- `docs/archive/` 放已完成的历史设计、计划和过程文档；日常使用以 `README.md` 和 `docs/USER_MANUAL.md` 为准。
 - `docker-compose.yml` 提供本地 Web 开发和预览服务。
 
 ## 参考

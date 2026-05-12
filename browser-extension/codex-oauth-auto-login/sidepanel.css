@@ -262,11 +262,11 @@ button.password-toggle[aria-pressed="true"] {
 }
 
 .password-toggle__slash {
-  display: block;
+  display: none;
 }
 
 .password-toggle[aria-pressed="true"] .password-toggle__slash {
-  display: none;
+  display: block;
 }
 
 .setting-check {

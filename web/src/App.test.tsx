@@ -4,7 +4,7 @@ import { vi } from "vitest";
 import App from "./App";
 import { README_DEMO_CONFIG } from "./lib/readme-demo";
 
-const { listPayload, mockApi } = vi.hoisted(() => ({
+const { listPayload, mockApi, mockOAuthJobStore } = vi.hoisted(() => ({
   listPayload: {
     meta: {
       generated_at: "2026-04-25T01:00:00+08:00",
@@ -81,6 +81,15 @@ const { listPayload, mockApi } = vi.hoisted(() => ({
     querySingleAccount: vi.fn(),
     syncAccountPriorities: vi.fn(),
   },
+  mockOAuthJobStore: {
+    load: vi.fn(() => []),
+    save: vi.fn(() => true),
+    clear: vi.fn(() => true),
+  },
+}));
+
+vi.mock("./lib/oauth-job-store", () => ({
+  createOAuthJobStore: vi.fn(() => mockOAuthJobStore),
 }));
 
 vi.mock("./lib/api", () => ({
@@ -253,6 +262,9 @@ beforeEach(() => {
   mockApi.saveRuntimeConfig.mockResolvedValue(undefined);
   mockApi.savePayloadCache.mockResolvedValue(undefined);
   mockApi.clearLocalCache.mockResolvedValue(undefined);
+  mockOAuthJobStore.load.mockReturnValue([]);
+  mockOAuthJobStore.save.mockReturnValue(true);
+  mockOAuthJobStore.clear.mockReturnValue(true);
   mockApi.fetchAccountList.mockResolvedValue(listPayload);
   mockApi.queryCachedAccounts.mockImplementation(async (_config, items: typeof listPayload.items) => buildQueryPayload(items.map((item) => item.auth_index)));
   mockApi.runKeeperDirectAction.mockImplementation(async (_config, items: typeof listPayload.items, action: "disable" | "refresh" | "delete") => ({
@@ -1179,6 +1191,7 @@ describe("App", () => {
     await waitFor(() => {
       expect(mockApi.clearLocalCache).toHaveBeenCalledTimes(1);
     });
+    expect(mockOAuthJobStore.clear).not.toHaveBeenCalled();
     expect(screen.queryByText("free@example.com")).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText("https://cpa.example/")).toHaveValue("");
     expect(screen.getByPlaceholderText("输入管理密钥")).toHaveValue("");

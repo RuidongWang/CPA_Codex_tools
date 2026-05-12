@@ -1,11 +1,41 @@
-importScripts('background-core.js', 'background-batch-core.js');
+importScripts('background-core.js', 'background-batch-core.js', 'background-flow-utils.js', 'background-platform-settings.js', 'background-runtime.js');
 
 const core = self.CpaCodexOAuthBackgroundCore;
 const batchCore = self.CpaCodexOAuthBackgroundBatchCore;
+const flowUtils = self.CpaCodexOAuthBackgroundFlowUtils;
+const platformStore = self.CpaCodexOAuthPlatformSettings;
+const runtime = self.CpaCodexOAuthBackgroundRuntime;
+const {
+  bridgeJobPayload,
+  createBridgeActionError,
+  createFlowError,
+  createPageSnapshot,
+  describeJob,
+  extractAuthUrl,
+  extractCode,
+  extractEmail,
+  extractState,
+  formatDiagnosticsMessage,
+  getTabDiagnostics,
+  hasQueuedOAuthJobs,
+  makeErrorMessage,
+  publicJob,
+  redactLogMessage,
+  scoreOpenAIState,
+} = flowUtils;
+const {
+  chromeCallback,
+  clearOpenAISession,
+  createTab,
+  dispatchTrustedClick,
+  getAllFrames,
+  getTab,
+  queryTabs,
+  removeTab,
+  sendMessageWithInjectedScript,
+} = runtime;
 const STATUS_KEY = 'cpaCodexOAuthAutoLoginStatus';
 const SETTINGS_KEY = 'cpaCodexOAuthAutoLoginSettings';
-const PLATFORM_SETTINGS_KEY = 'cpaCodexOAuthAutoLoginPlatformSettings';
-const PLATFORM_VAULT_SECRET_KEY = 'cpaCodexOAuthAutoLoginPlatformVaultSecret';
 const BRIDGE_TIMEOUT_MS = 25000;
 const EMAIL_CONTINUE_RETRIES = 4;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -39,9 +69,6 @@ const REQUIRED_BRIDGE_ACTIONS = Object.freeze([
   'CHECK_OAUTH_STATUS',
   'RELEASE_JOB',
 ]);
-const PASSWORD_ENCRYPTION_ALGORITHM = 'AES-GCM';
-const PASSWORD_ENCRYPTION_VERSION = 1;
-
 let activeRun = null;
 let operationLog = [];
 let automationSettings = core.normalizeAutomationSettings();
@@ -73,35 +100,12 @@ function buildOpenAIActionOptions() {
   };
 }
 
-function publicJob(job) {
-  if (!job) {
-    return null;
-  }
-  return {
-    jobId: job.jobId || '',
-    authIndex: job.authIndex || '',
-    accountEmail: job.accountEmail || '',
-    hotmailEmail: job.hotmailEmail || '',
-    status: job.status || '',
-    attempt: Number(job.attempt || 0),
-    leaseExpiresAt: job.leaseExpiresAt || null,
-  };
-}
-
 function persistStatus(status) {
   try {
     chrome.storage?.session?.set?.({ [STATUS_KEY]: status });
   } catch {
     // Status persistence is best-effort and never required for the flow.
   }
-}
-
-function redactLogMessage(value) {
-  return String(value || '')
-    .replace(/([?&](?:code|token)=)[^&\s]+/gi, '$1[redacted]')
-    .replace(/\b((?:code|token|secret|pass(?:word)?|authorization|cookie|refresh[_-]?token)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
-    .replace(/\b\d{6,8}\b/g, '[redacted]')
-    .trim();
 }
 
 function appendOperationLog(input, currentJob) {
@@ -161,39 +165,6 @@ function setStatus(input) {
   return lastStatus;
 }
 
-function makeErrorMessage(error) {
-  if (!error) return 'Unknown error.';
-  if (typeof error === 'string') return error;
-  if (error.message) return error.message;
-  if (error.error?.message) return error.error.message;
-  if (typeof error.error === 'string') return error.error;
-  return String(error);
-}
-
-function createFlowError(errorType, code, message, extra = {}) {
-  const error = new Error(message || code || errorType || 'flow_error');
-  error.errorType = errorType;
-  error.code = code || errorType || 'flow_error';
-  Object.assign(error, extra);
-  return error;
-}
-
-function createBridgeActionError(action, response) {
-  const rawError = response?.error;
-  const bridgeError = rawError && typeof rawError === 'object' ? rawError : {};
-  const message = bridgeError.message
-    || (typeof rawError === 'string' ? rawError : '')
-    || `CPA bridge action failed: ${action}`;
-  const error = new Error(message);
-  error.name = 'BridgeActionError';
-  error.action = action;
-  error.errorType = bridgeError.errorType;
-  error.code = bridgeError.code || response?.code || '';
-  error.bridgeError = rawError;
-  error.bridgeResult = response?.result;
-  return error;
-}
-
 function assertRunning(run) {
   if (!run || run.stopRequested) {
     const error = new Error('Auto-login stopped.');
@@ -222,121 +193,6 @@ function wait(ms, run) {
   });
 }
 
-function chromeCallback(call) {
-  return new Promise((resolve, reject) => {
-    try {
-      call((result) => {
-        const lastError = chrome.runtime?.lastError;
-        if (lastError) {
-          reject(new Error(lastError.message));
-          return;
-        }
-        resolve(result);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(String(value || ''));
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
-}
-
-function bytesToArrayBuffer(bytes) {
-  const copy = new Uint8Array(bytes.byteLength);
-  copy.set(bytes);
-  return copy.buffer;
-}
-
-function bytesToBase64Url(bytes) {
-  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function getExtensionCrypto() {
-  if (!globalThis.crypto?.subtle || !globalThis.crypto.getRandomValues) {
-    throw new Error('当前浏览器扩展环境不支持密码加密');
-  }
-  return globalThis.crypto;
-}
-
-function randomBytes(length) {
-  const bytes = new Uint8Array(length);
-  getExtensionCrypto().getRandomValues(bytes);
-  return bytes;
-}
-
-async function getPlatformVaultSecret() {
-  const stored = await chromeCallback((done) => chrome.storage.local.get(PLATFORM_VAULT_SECRET_KEY, done)).catch(() => ({}));
-  const existing = String(stored?.[PLATFORM_VAULT_SECRET_KEY] || '').trim();
-  if (existing) {
-    return existing;
-  }
-  const generated = bytesToBase64Url(randomBytes(32));
-  await chromeCallback((done) => chrome.storage.local.set({ [PLATFORM_VAULT_SECRET_KEY]: generated }, done));
-  return generated;
-}
-
-async function derivePasswordKey(secret) {
-  const digest = await getExtensionCrypto().subtle.digest('SHA-256', new TextEncoder().encode(secret));
-  return getExtensionCrypto().subtle.importKey('raw', digest, PASSWORD_ENCRYPTION_ALGORITHM, false, ['encrypt', 'decrypt']);
-}
-
-function isEncryptedPlatformPassword(value) {
-  return Boolean(
-    value
-    && typeof value === 'object'
-    && value.__encrypted === true
-    && value.v === PASSWORD_ENCRYPTION_VERSION
-    && value.alg === PASSWORD_ENCRYPTION_ALGORITHM
-    && typeof value.iv === 'string'
-    && typeof value.ciphertext === 'string'
-  );
-}
-
-async function encryptPlatformPassword(password) {
-  const iv = randomBytes(12);
-  const key = await derivePasswordKey(await getPlatformVaultSecret());
-  const ciphertext = await getExtensionCrypto().subtle.encrypt(
-    { name: PASSWORD_ENCRYPTION_ALGORITHM, iv: bytesToArrayBuffer(iv) },
-    key,
-    bytesToArrayBuffer(new TextEncoder().encode(String(password || '')))
-  );
-  return {
-    __encrypted: true,
-    v: PASSWORD_ENCRYPTION_VERSION,
-    alg: PASSWORD_ENCRYPTION_ALGORITHM,
-    iv: bytesToBase64(iv),
-    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
-  };
-}
-
-async function decryptPlatformPassword(value) {
-  if (!isEncryptedPlatformPassword(value)) {
-    return typeof value === 'string' ? value : '';
-  }
-  const key = await derivePasswordKey(await getPlatformVaultSecret());
-  const plaintext = await getExtensionCrypto().subtle.decrypt(
-    { name: PASSWORD_ENCRYPTION_ALGORITHM, iv: bytesToArrayBuffer(base64ToBytes(value.iv)) },
-    key,
-    bytesToArrayBuffer(base64ToBytes(value.ciphertext))
-  );
-  return new TextDecoder().decode(plaintext);
-}
-
 async function loadAutomationSettings() {
   if (!chrome.storage?.local?.get) {
     automationSettings = core.normalizeAutomationSettings();
@@ -361,58 +217,14 @@ async function saveAutomationSettings(input) {
   return settings;
 }
 
-async function readStoredPlatformSettingsRaw() {
-  if (!chrome.storage?.local?.get) {
-    return {};
-  }
-  const stored = await chromeCallback((done) => chrome.storage.local.get(PLATFORM_SETTINGS_KEY, done)).catch(() => ({}));
-  const raw = stored?.[PLATFORM_SETTINGS_KEY];
-  return raw && typeof raw === 'object' ? raw : {};
-}
-
-function publicPlatformSettings(raw = {}) {
-  return core.normalizePlatformSettings({
-    platformBaseUrl: raw.platformBaseUrl,
-    platformPasswordSaved: Boolean(raw.encryptedPlatformPassword || raw.platformPasswordSaved),
-  });
-}
-
 async function loadPlatformSettings(options = {}) {
-  const raw = await readStoredPlatformSettingsRaw();
-  platformSettings = publicPlatformSettings(raw);
-  if (!options.includePassword) {
-    return platformSettings;
-  }
-  const platformPassword = await decryptPlatformPassword(raw.encryptedPlatformPassword).catch(() => '');
-  return {
-    ...platformSettings,
-    platformPassword,
-    platformPasswordSaved: Boolean(platformPassword || raw.encryptedPlatformPassword),
-  };
+  const loaded = await platformStore.loadPlatformSettings(options);
+  platformSettings = core.normalizePlatformSettings(loaded);
+  return options.includePassword ? loaded : platformSettings;
 }
 
 async function savePlatformSettings(input = {}) {
-  const source = input && typeof input === 'object' ? input : {};
-  const normalized = core.normalizePlatformSettings(source);
-  if (String(source.platformBaseUrl || '').trim() && !normalized.platformBaseUrl) {
-    throw new Error('Web 地址无效');
-  }
-  const existing = await readStoredPlatformSettingsRaw();
-  const next = {
-    platformBaseUrl: normalized.platformBaseUrl,
-  };
-  const password = typeof source.platformPassword === 'string' ? source.platformPassword.trim() : '';
-  const savePlatformPassword = Boolean(source.savePlatformPassword);
-  if (savePlatformPassword && password) {
-    next.encryptedPlatformPassword = await encryptPlatformPassword(password);
-  } else if (savePlatformPassword && existing.encryptedPlatformPassword) {
-    next.encryptedPlatformPassword = existing.encryptedPlatformPassword;
-  }
-
-  if (chrome.storage?.local?.set) {
-    await chromeCallback((done) => chrome.storage.local.set({ [PLATFORM_SETTINGS_KEY]: next }, done));
-  }
-  platformSettings = publicPlatformSettings(next);
+  platformSettings = await platformStore.savePlatformSettings(input);
   setStatus({
     phase: lastStatus.phase || 'idle',
     message: lastStatus.message || 'Ready.',
@@ -422,61 +234,13 @@ async function savePlatformSettings(input = {}) {
 }
 
 async function resetPlatformSettings() {
-  if (chrome.storage?.local?.remove) {
-    await chromeCallback((done) => chrome.storage.local.remove(PLATFORM_SETTINGS_KEY, done));
-  }
-  platformSettings = core.normalizePlatformSettings();
+  platformSettings = await platformStore.resetPlatformSettings();
   setStatus({
     phase: lastStatus.phase || 'idle',
     message: lastStatus.message || 'Ready.',
     platformSettings,
   });
   return platformSettings;
-}
-
-function queryTabs(queryInfo) {
-  return chromeCallback((done) => chrome.tabs.query(queryInfo, done));
-}
-
-function getTab(tabId) {
-  return chromeCallback((done) => chrome.tabs.get(tabId, done));
-}
-
-function createTab(createProperties) {
-  return chromeCallback((done) => chrome.tabs.create(createProperties, done));
-}
-
-function removeTab(tabId) {
-  if (!tabId) {
-    return Promise.resolve();
-  }
-  return chromeCallback((done) => chrome.tabs.remove(tabId, done)).catch(() => null);
-}
-
-function sendTabMessage(tabId, message, options = {}) {
-  return chromeCallback((done) => chrome.tabs.sendMessage(tabId, message, options, done));
-}
-
-function getAllFrames(tabId) {
-  return chromeCallback((done) => chrome.webNavigation.getAllFrames({ tabId }, done));
-}
-
-async function ensureScript(tabId, file, frameId = 0) {
-  try {
-    await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files: [file] });
-  } catch {
-    // The script may already be injected or the page may be temporarily unavailable.
-  }
-}
-
-async function sendMessageWithInjectedScript(tabId, file, message, options = {}) {
-  const frameId = Number.isInteger(options.frameId) ? options.frameId : 0;
-  try {
-    return await sendTabMessage(tabId, message, { frameId });
-  } catch {
-    await ensureScript(tabId, file, frameId);
-    return sendTabMessage(tabId, message, { frameId });
-  }
 }
 
 function createOpenAIActionError(action, response) {
@@ -539,43 +303,6 @@ async function callOpenAI(tabId, action, payload = {}, frameId = 0) {
   return response?.result || response || {};
 }
 
-function getDebuggerTarget(tabId) {
-  return { tabId };
-}
-
-function attachDebugger(tabId) {
-  if (!chrome.debugger?.attach) {
-    throw createFlowError('retryable', 'debugger_unavailable', 'Chrome debugger API is not available for trusted OpenAI clicks.');
-  }
-  const target = getDebuggerTarget(tabId);
-  return chromeCallback((done) => chrome.debugger.attach(target, '1.3', done));
-}
-
-function detachDebugger(tabId) {
-  if (!chrome.debugger?.detach) {
-    return Promise.resolve();
-  }
-  return chromeCallback((done) => chrome.debugger.detach(getDebuggerTarget(tabId), done));
-}
-
-function sendDebuggerCommand(tabId, method, params = {}) {
-  if (!chrome.debugger?.sendCommand) {
-    throw createFlowError('retryable', 'debugger_unavailable', 'Chrome debugger API is not available for trusted OpenAI clicks.');
-  }
-  return chromeCallback((done) => chrome.debugger.sendCommand(getDebuggerTarget(tabId), method, params, done));
-}
-
-async function dispatchTrustedClick(tabId, rect) {
-  await attachDebugger(tabId);
-  try {
-    for (const event of core.buildTrustedClickMouseEvents(rect)) {
-      await sendDebuggerCommand(tabId, event.method, event.params);
-    }
-  } finally {
-    await detachDebugger(tabId).catch(() => null);
-  }
-}
-
 async function getOpenAIFrameIds(tab, options = {}) {
   const fallback = options.includeFallback === false ? [] : [0];
   let frames = [];
@@ -603,23 +330,6 @@ async function tabHasOpenAIAuthContext(tab) {
   }
   const frameIds = await getOpenAIFrameIds(tab, { includeFallback: false });
   return frameIds.length > 0;
-}
-
-function scoreOpenAIState(state) {
-  switch (state?.state) {
-    case 'manual_required':
-      return 50;
-    case 'verification':
-      return 40;
-    case 'email':
-      return 35;
-    case 'account':
-      return 32;
-    case 'consent':
-      return 30;
-    default:
-      return 0;
-  }
 }
 
 async function classifyOpenAI(tab) {
@@ -658,113 +368,6 @@ async function classifyOpenAI(tab) {
       emailPageHint: Boolean(state.emailPageHint),
     })),
   };
-}
-
-function readPath(source, path) {
-  return path.split('.').reduce((current, key) => {
-    if (current && typeof current === 'object' && key in current) {
-      return current[key];
-    }
-    return undefined;
-  }, source);
-}
-
-function pickString(source, paths) {
-  for (const path of paths) {
-    const value = readPath(source, path);
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-  return '';
-}
-
-function extractAuthUrl(payload) {
-  return pickString(payload, [
-    'authUrl',
-    'authorizationUrl',
-    'oauthUrl',
-    'url',
-    'startResult.authUrl',
-    'startResult.authorizationUrl',
-    'job.authUrl',
-    'session.authUrl',
-    'session.url',
-    'oauth.authUrl',
-    'oauth.url',
-  ]);
-}
-
-function extractState(payload) {
-  return pickString(payload, [
-    'state',
-    'authState',
-    'oauthState',
-    'startResult.state',
-    'job.state',
-    'session.state',
-    'oauth.state',
-  ]);
-}
-
-function extractEmail(payload) {
-  return pickString(payload, [
-    'accountEmail',
-    'account.email',
-    'selectedAccount.email',
-    'hotmailEmail',
-    'selectedHotmail.email',
-    'hotmail.email',
-    'email',
-    'oauth.email',
-  ]);
-}
-
-function extractCode(payload) {
-  return pickString(payload, [
-    'code',
-    'verificationCode',
-    'latestCode',
-    'hotmailCode.code',
-    'hotmailCode',
-    'result.code',
-  ]);
-}
-
-function getTabDiagnostics(tab, state = {}, context = {}) {
-  return {
-    url: tab?.url || '',
-    title: tab?.title || '',
-    pageState: state?.state || 'unknown',
-    reason: state?.reason || '',
-    email: extractEmail(state) || context?.accountEmail || context?.email || '',
-    tabStatus: tab?.status || '',
-    frameId: Number.isInteger(state?.frameId) ? state.frameId : 0,
-    frameCount: Number(state?.frameCount || 0),
-    inputCount: Number(state?.inputCount || 0),
-    visibleInputCount: Number(state?.visibleInputCount || 0),
-    genericInputCount: Number(state?.genericInputCount || 0),
-    activeTag: state?.activeTag || '',
-    activeInput: state?.activeInput || '',
-    emailPageHint: Boolean(state?.emailPageHint),
-  };
-}
-
-function formatDiagnosticsMessage(prefix, diagnostics) {
-  const details = [
-    diagnostics.pageState ? `state=${diagnostics.pageState}` : '',
-    diagnostics.reason ? `reason=${diagnostics.reason}` : '',
-    diagnostics.email ? `email=${diagnostics.email}` : '',
-    diagnostics.tabStatus ? `tab=${diagnostics.tabStatus}` : '',
-    diagnostics.frameCount ? `frame=${diagnostics.frameId}/${diagnostics.frameCount}` : '',
-    diagnostics.inputCount ? `inputs=${diagnostics.visibleInputCount}/${diagnostics.inputCount}` : '',
-    diagnostics.genericInputCount ? `generic=${diagnostics.genericInputCount}` : '',
-    diagnostics.activeTag ? `active=${diagnostics.activeTag}${diagnostics.activeInput ? `(${diagnostics.activeInput})` : ''}` : '',
-    diagnostics.emailPageHint ? 'emailHint=true' : '',
-    diagnostics.title ? `title="${diagnostics.title}"` : '',
-  ].filter(Boolean);
-
-  return details.length ? `${prefix} (${details.join(', ')}).` : prefix;
 }
 
 async function readOpenAIEmail(tabId, frameId = 0) {
@@ -977,73 +580,6 @@ function assertStrictExpectedPageEmail(observedEmail, expectedEmail, context) {
   throwPageEmailVerificationFailure(verification);
 }
 
-function createPageSnapshot(tab, state = {}) {
-  return {
-    url: tab?.url || '',
-    title: tab?.title || '',
-    state: state.state || 'unknown',
-    reason: state.reason || '',
-    email: extractEmail(state) || '',
-    frameId: Number.isInteger(state.frameId) ? state.frameId : 0,
-    frameCount: Number(state.frameCount || 0),
-    inputCount: Number(state.inputCount || 0),
-    visibleInputCount: Number(state.visibleInputCount || 0),
-    updatedAt: new Date().toISOString(),
-  };
-}
-
-async function clearOpenAICookiesFallback() {
-  if (!chrome.cookies?.getAll || !chrome.cookies?.remove) {
-    return { removed: 0 };
-  }
-
-  let removed = 0;
-  for (const origin of core.OPENAI_CLEAR_ORIGINS) {
-    const cookies = await chromeCallback((done) => chrome.cookies.getAll({ url: origin }, done)).catch(() => []);
-    for (const cookie of cookies || []) {
-      const path = String(cookie.path || '/').startsWith('/') ? cookie.path : `/${cookie.path}`;
-      const details = {
-        url: `${origin}${path}`,
-        name: cookie.name,
-      };
-      if (cookie.storeId) {
-        details.storeId = cookie.storeId;
-      }
-      await chromeCallback((done) => chrome.cookies.remove(details, done)).catch(() => null);
-      removed += 1;
-    }
-  }
-  return { removed };
-}
-
-async function clearOpenAISession() {
-  const removalOptions = core.buildOpenAISessionRemovalOptions();
-  if (chrome.browsingData?.remove) {
-    await chromeCallback((done) => chrome.browsingData.remove(
-      removalOptions.options,
-      removalOptions.dataToRemove,
-      done
-    ));
-    return { mode: 'browsingData' };
-  }
-
-  const fallback = await clearOpenAICookiesFallback();
-  return { mode: 'cookies', ...fallback };
-}
-
-function bridgeJobPayload(run, job, extra = {}) {
-  return {
-    extensionId: run.id,
-    jobId: job?.jobId || '',
-    authIndex: job?.authIndex || '',
-    accountEmail: job?.accountEmail || '',
-    hotmailId: job?.hotmailId || '',
-    hotmailEmail: job?.hotmailEmail || '',
-    state: job?.state || '',
-    ...extra,
-  };
-}
-
 function updateRunFromBridgeResult(run, result = {}) {
   if (result.summary) {
     run.queueSummary = result.summary;
@@ -1116,10 +652,6 @@ function clearRememberedRetryAttempt(run, job) {
   batchCore.forgetRetryAttempt(run?.retryAttemptsByJobId, job);
 }
 
-function describeJob(job) {
-  return job?.accountEmail || job?.authIndex || job?.jobId || 'job';
-}
-
 async function waitBeforeSkippingBlockedJob(run, job, classified = {}) {
   const delayMs = getAutomationSettings().blockedSkipDelayMs;
   const seconds = Math.ceil(delayMs / 1000);
@@ -1130,14 +662,6 @@ async function waitBeforeSkippingBlockedJob(run, job, classified = {}) {
   });
   await wait(delayMs, run);
   run.postJobDelayMs = Math.max(Number(run.postJobDelayMs || 0), delayMs);
-}
-
-function hasQueuedOAuthJobs(summary) {
-  if (!summary || typeof summary !== 'object') {
-    return true;
-  }
-  const queued = Number(summary.queued);
-  return !Number.isFinite(queued) || queued > 0;
 }
 
 async function refreshQueueSummary(run) {

@@ -2,6 +2,8 @@
 
 本文面向日常使用者，说明如何启动 CPA Codex Tools、连接 CPA Management API、查看额度、备份账号配置、批量调整优先级、执行 Keeper 维护，以及使用 Codex OAuth 重登辅助功能。
 
+本文截图均来自 README 演示模式或扩展侧栏空白示例，只包含虚构账号、虚构额度或空白配置；截图前未填入真实 CPA 地址、管理密钥、Hotmail 密码、refresh token 或验证码。
+
 ## 目录
 
 - [1. 项目用途](#1-项目用途)
@@ -172,6 +174,8 @@ npm run web:preview
 ## 4. 登录与连接配置
 
 首次打开页面会进入登录页。
+
+![登录页](readme/login-page.png)
 
 操作步骤：
 
@@ -393,6 +397,8 @@ cpa-codex-sensitive-export-YYYYMMDD-HHmmss.json
 
 Keeper 页面用于账号维护监控和批量操作。
 
+![Keeper 页面](readme/keeper-panel.png)
+
 ### 9.1 演练扫描
 
 点击 `演练扫描` 会按当前 Keeper 策略检查账号，并生成维护建议。演练不会改动 CPA 远端数据。
@@ -446,6 +452,8 @@ Keeper 页面下方仍显示账号表格。先勾选账号，再使用：
 ## 10. OAuth 页面
 
 OAuth 页面用于辅助失效 Codex 账号重新完成 CPA Codex OAuth 登录。
+
+![OAuth 页面](readme/oauth-panel.png)
 
 ### 10.1 失效账号来源
 
@@ -514,6 +522,8 @@ OAuth 页面顶部提供批量队列：
 ```text
 browser-extension/codex-oauth-auto-login/
 ```
+
+![扩展侧栏](readme/extension-sidepanel.png)
 
 ### 11.1 安装扩展
 

@@ -37,9 +37,9 @@ import {
 } from "./lib/api";
 import { I18nProvider } from "./lib/i18n";
 import { buildKeeperDuplicateGroups, type KeeperDuplicateGroup } from "./lib/keeper-duplicates";
-import { createOAuthJobStore, type OAuthJobStore } from "./lib/oauth-job-store";
 import { buildOAuthJobs, summarizeOAuthJobs, type OAuthQueueScope } from "./lib/oauth-jobs";
 import { DEFAULT_OAUTH_SETTINGS } from "./lib/oauth";
+import { useOAuthQueueState } from "./hooks/useOAuthQueueState";
 import {
   applyPriorityDrafts,
   buildAutoPriorityDrafts,
@@ -49,7 +49,7 @@ import {
 } from "./lib/priority";
 import { buildOverviewStats, buildPlanCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
 import { isReadmeDemoMode, README_DEMO_CONFIG, README_DEMO_PAYLOAD } from "./lib/readme-demo";
-import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, OAuthJob, OAuthSettings, PayloadEnvelope, RuntimeConfig, UiSettings } from "./types";
+import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, OAuthSettings, PayloadEnvelope, RuntimeConfig, UiSettings } from "./types";
 
 const PROGRESS_HOLD_MS = 2000;
 const PROGRESS_FADE_MS = 240;
@@ -251,7 +251,6 @@ export default function App() {
   const [keeperRefreshFailureAuthIndexes, setKeeperRefreshFailureAuthIndexes] = useState<string[]>([]);
   const [keeperDuplicateGroups, setKeeperDuplicateGroups] = useState<KeeperDuplicateGroup[]>([]);
   const [keeperDuplicateSelectedAuthIndexes, setKeeperDuplicateSelectedAuthIndexes] = useState<string[]>([]);
-  const [oauthQueueJobs, setOAuthQueueJobs] = useState<OAuthJob[]>([]);
   const [sortState, setSortState] = useState<SortState>({ key: "default", direction: "none" });
   const [priorityDrafts, setPriorityDrafts] = useState<Record<string, number>>({});
   const [lastDraftChangeAt, setLastDraftChangeAt] = useState<number | null>(null);
@@ -259,22 +258,14 @@ export default function App() {
   const deferredSearch = useDeferredValue(search);
   const deferredKeeperSearch = useDeferredValue(keeperSearch);
   const toolbarRef = useRef<HTMLElement | null>(null);
-  const oauthJobStoreRef = useRef<OAuthJobStore | null>(null);
   const progressRef = useRef<ProgressState | null>(null);
   const progressQueueRef = useRef<ProgressState[]>([]);
   const progressDrainTimerRef = useRef<number | null>(null);
-  if (oauthJobStoreRef.current === null) {
-    oauthJobStoreRef.current = createOAuthJobStore();
-  }
-  const oauthJobStore = oauthJobStoreRef.current;
+  const { oauthJobStore, oauthQueueJobs, replaceOAuthQueueJobs, persistOAuthQueueJobs, clearOAuthQueueJobs } = useOAuthQueueState();
 
   useEffect(() => {
     progressRef.current = progress;
   }, [progress]);
-
-  useEffect(() => {
-    setOAuthQueueJobs(oauthJobStore.load());
-  }, [oauthJobStore]);
 
   useEffect(() => {
     return () => {
@@ -1031,15 +1022,6 @@ export default function App() {
     }
   }
 
-  function replaceOAuthQueueJobs(jobs: OAuthJob[]) {
-    setOAuthQueueJobs(jobs);
-  }
-
-  function persistOAuthQueueJobs(jobs: OAuthJob[]) {
-    oauthJobStore.save(jobs);
-    setOAuthQueueJobs(jobs);
-  }
-
   function buildOAuthQueueScope(kind: "all" | "selected" | "filtered"): OAuthQueueScope {
     if (kind === "selected") {
       return { kind, authIndexes: selectedAuthIndexes };
@@ -1063,8 +1045,7 @@ export default function App() {
   }
 
   async function handleClearOAuthQueue() {
-    oauthJobStore.clear();
-    setOAuthQueueJobs([]);
+    clearOAuthQueueJobs();
   }
 
   function handlePlanChange(plan: string) {
@@ -1378,6 +1359,7 @@ export default function App() {
     setSettingsClearingCache(true);
     try {
       await clearLocalCache();
+      replaceOAuthQueueJobs([]);
       setRememberManagementKey(false);
       resetLocalViewState();
       setSessionState("login");

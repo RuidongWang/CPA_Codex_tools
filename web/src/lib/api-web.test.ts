@@ -17,6 +17,7 @@ import {
   submitCodexOAuthCallback,
   syncAccountPriorities,
 } from "./api";
+import { OAUTH_JOB_STORE_KEY } from "./oauth-job-store";
 import type { AccountItem, RuntimeConfig } from "../types";
 
 const WEB_PAYLOAD_CACHE_KEY = "cpa_codex_quota_cache.payload-cache";
@@ -1418,6 +1419,7 @@ describe("browser runtime api", () => {
     window.localStorage.setItem(WEB_PAYLOAD_CACHE_KEY, JSON.stringify({ items: [demoItem] }));
     window.localStorage.setItem("cpa-quota-desk.runtime-config", JSON.stringify({ cpaBaseUrl: "https://legacy.example/" }));
     window.localStorage.setItem(LEGACY_WEB_PAYLOAD_CACHE_KEY, JSON.stringify({ items: [] }));
+    window.localStorage.setItem(OAUTH_JOB_STORE_KEY, JSON.stringify([{ jobId: "oauth-job:idx-a" }]));
     await savePayloadCache(demoPayload("healthy"));
 
     await clearLocalCache();
@@ -1426,6 +1428,7 @@ describe("browser runtime api", () => {
     expect(window.localStorage.getItem(WEB_PAYLOAD_CACHE_KEY)).toBeNull();
     expect(window.localStorage.getItem("cpa-quota-desk.runtime-config")).toBeNull();
     expect(window.localStorage.getItem(LEGACY_WEB_PAYLOAD_CACHE_KEY)).toBeNull();
+    expect(window.localStorage.getItem(OAUTH_JOB_STORE_KEY)).toBeNull();
     expect(await loadPayloadCache()).toBeNull();
   });
 });

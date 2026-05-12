@@ -33,5 +33,9 @@ jobs:
       - name: Test
         run: npm run test:run
 
+      - name: Test browser extension
+        working-directory: .
+        run: node --test browser-extension/codex-oauth-auto-login/tests/*.test.js
+
       - name: Build
         run: npm run web:build

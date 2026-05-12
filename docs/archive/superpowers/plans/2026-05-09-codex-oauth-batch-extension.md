@@ -12,8 +12,8 @@
 
 ## Source Documents
 
-- Spec: `docs/superpowers/specs/2026-05-09-codex-oauth-batch-extension-design.md`
-- Existing single-account plan: `docs/superpowers/plans/2026-05-08-codex-oauth-extension.md`
+- Spec: `docs/archive/superpowers/specs/2026-05-09-codex-oauth-batch-extension-design.md`
+- Existing single-account plan: `docs/archive/superpowers/plans/2026-05-08-codex-oauth-extension.md`
 
 ## Implementation Order
 
@@ -1178,7 +1178,7 @@ git commit -m "feat: add oauth batch side panel"
 **Files:**
 - Modify: `README.md`
 - Modify: `browser-extension/codex-oauth-auto-login/README.md`
-- Modify: `docs/superpowers/plans/2026-05-09-codex-oauth-batch-extension.md` only if implementation discovers plan drift.
+- Modify: `docs/archive/superpowers/plans/2026-05-09-codex-oauth-batch-extension.md` only if implementation discovers plan drift.
 
 - [ ] **Step 1: Run Web targeted tests**
 
@@ -1244,7 +1244,7 @@ Expected:
 Run:
 
 ```bash
-rg -n "refreshToken|refresh_token|password|client_secret|authorization|cookie|157526|744357|780533" README.md browser-extension web/src docs/superpowers/plans/2026-05-09-codex-oauth-batch-extension.md
+rg -n "refreshToken|refresh_token|password|client_secret|authorization|cookie|157526|744357|780533" README.md browser-extension web/src docs/archive/superpowers/plans/2026-05-09-codex-oauth-batch-extension.md
 ```
 
 Expected:
