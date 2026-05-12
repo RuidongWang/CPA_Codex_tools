@@ -1,5 +1,7 @@
 // 这些类型对应 Web 端统一 payload，先把 CPA 响应到界面的契约锁住。
 export type PriorityPlanKey = "team" | "plus" | "free" | "pro 5x" | "pro 20x" | "unknown";
+export type ThemeMode = "system" | "light" | "dark";
+export type AppLanguage = "zh" | "en";
 
 export interface PriorityPlanPreview {
   key: PriorityPlanKey;
@@ -23,6 +25,12 @@ export interface RuntimeConfig {
   priorityPlanOrder: PriorityPlanKey[];
   priorityPlanRanges: PriorityPlanRangeMap;
   oauthSettings: OAuthSettings;
+  uiSettings?: UiSettings;
+}
+
+export interface UiSettings {
+  themeMode: ThemeMode;
+  language: AppLanguage;
 }
 
 export interface KeeperSettings {

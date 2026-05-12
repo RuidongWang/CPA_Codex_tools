@@ -24,6 +24,40 @@
         <p id="message">打开本地 CPA 页面后读取账号池。</p>
       </section>
 
+      <section class="settings-section" aria-label="平台绑定">
+        <div class="section-title">
+          <h2>平台绑定</h2>
+          <span id="platform-state" class="meta">读取中</span>
+        </div>
+        <div class="settings-grid settings-grid--single">
+          <label class="setting-field" for="platform-base-url">
+            <span>Web 地址</span>
+            <input id="platform-base-url" type="url" inputmode="url" placeholder="http://127.0.0.1:5173">
+          </label>
+          <label class="setting-field" for="platform-password">
+            <span>访问密码</span>
+            <div class="password-field">
+              <input id="platform-password" type="password" autocomplete="current-password" placeholder="勾选后保存密码">
+              <button id="platform-password-toggle" class="password-toggle" type="button" aria-label="显示访问密码" title="显示访问密码" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M2.6 12s3.4-6 9.4-6 9.4 6 9.4 6-3.4 6-9.4 6-9.4-6-9.4-6Z"></path>
+                  <circle cx="12" cy="12" r="2.7"></circle>
+                  <path class="password-toggle__slash" d="M4 4l16 16"></path>
+                </svg>
+              </button>
+            </div>
+          </label>
+          <label class="setting-check" for="platform-save-password">
+            <input id="platform-save-password" type="checkbox">
+            <span>保存密码</span>
+          </label>
+        </div>
+        <div class="settings-actions">
+          <button id="save-platform-settings" type="button">保存绑定</button>
+          <button id="reset-platform-settings" type="button" class="secondary">恢复本地</button>
+        </div>
+      </section>
+
       <section class="settings-section" aria-label="自动化参数">
         <div class="section-title">
           <h2>自动化参数</h2>

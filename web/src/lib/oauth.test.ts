@@ -65,10 +65,11 @@ describe("parseInvalidAccountEmailImportText", () => {
 });
 
 describe("normalizeOAuthSettings", () => {
-  it("defaults rememberHotmailTokens and imported invalid emails, and preserves explicit true", () => {
-    expect(normalizeOAuthSettings({}).rememberHotmailTokens).toBe(false);
+  it("always enables local Hotmail token persistence and normalizes imported invalid emails", () => {
+    expect(normalizeOAuthSettings({}).rememberHotmailTokens).toBe(true);
     expect(normalizeOAuthSettings({}).importedInvalidAccountEmails).toEqual([]);
     expect(normalizeOAuthSettings({ rememberHotmailTokens: true }).rememberHotmailTokens).toBe(true);
+    expect(normalizeOAuthSettings({ rememberHotmailTokens: false }).rememberHotmailTokens).toBe(true);
   });
 
   it("keeps valid helper url, preserves password-only hotmail accounts, and normalizes imported invalid emails", () => {
@@ -100,7 +101,7 @@ describe("normalizeOAuthSettings", () => {
         status: "pending",
       }),
     ]);
-    expect(settings.rememberHotmailTokens).toBe(false);
+    expect(settings.rememberHotmailTokens).toBe(true);
     expect(settings.importedInvalidAccountEmails).toEqual(["a@outlook.com", "b@hotmail.com"]);
   });
 

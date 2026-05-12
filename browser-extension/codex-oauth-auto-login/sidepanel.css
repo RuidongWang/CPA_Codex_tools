@@ -194,6 +194,10 @@ button.danger:hover {
   grid-template-columns: 1fr 1fr;
 }
 
+.settings-grid--single {
+  grid-template-columns: 1fr;
+}
+
 .setting-field {
   display: flex;
   flex-direction: column;
@@ -201,7 +205,8 @@ button.danger:hover {
   min-width: 0;
 }
 
-.setting-field span {
+.setting-field span,
+.setting-check span {
   color: #667085;
   font-size: 12px;
   line-height: 1.25;
@@ -217,6 +222,64 @@ button.danger:hover {
   min-width: 0;
   padding: 0 8px;
   width: 100%;
+}
+
+.password-field {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+}
+
+button.password-toggle {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  color: #344054;
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0;
+  width: 34px;
+}
+
+button.password-toggle:hover,
+button.password-toggle[aria-pressed="true"] {
+  background: #f2f4f7;
+  color: #1f4fd8;
+}
+
+.password-toggle svg {
+  fill: none;
+  height: 18px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 18px;
+}
+
+.password-toggle__slash {
+  display: block;
+}
+
+.password-toggle[aria-pressed="true"] .password-toggle__slash {
+  display: none;
+}
+
+.setting-check {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.setting-check input {
+  height: 16px;
+  margin: 0;
+  width: 16px;
 }
 
 .setting-field input:focus {

@@ -21,6 +21,9 @@ import type {
   PayloadEnvelope,
   QueryProgressEvent,
   RuntimeConfig,
+  AppLanguage,
+  ThemeMode,
+  UiSettings,
 } from "../types";
 
 type StoredHotmailAccount = Partial<Omit<HotmailAccount, "password" | "refreshToken" | "lastCode">> & {
@@ -114,6 +117,10 @@ export const DEFAULT_KEEPER_SETTINGS: KeeperSettings = {
   expiryThresholdDays: 3,
   enableRefresh: true,
   workerThreads: 6,
+};
+export const DEFAULT_UI_SETTINGS: UiSettings = {
+  themeMode: "system",
+  language: "zh",
 };
 const WHAM_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const OPENAI_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -303,6 +310,26 @@ export function normalizeKeeperSettings(input: Partial<KeeperSettings> | null | 
   };
 }
 
+function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === "light" || value === "dark" || value === "system"
+    ? value
+    : DEFAULT_UI_SETTINGS.themeMode;
+}
+
+function normalizeLanguage(value: unknown): AppLanguage {
+  return value === "en" || value === "zh"
+    ? value
+    : DEFAULT_UI_SETTINGS.language;
+}
+
+export function normalizeUiSettings(input: Partial<UiSettings> | null | undefined): UiSettings {
+  const raw = input ?? {};
+  return {
+    themeMode: normalizeThemeMode(raw.themeMode),
+    language: normalizeLanguage(raw.language),
+  };
+}
+
 export function normalizeRuntimeConfig(input: Partial<RuntimeConfig> | null | undefined): RuntimeConfig {
   const raw = input ?? {};
   const queryConcurrency =
@@ -317,6 +344,7 @@ export function normalizeRuntimeConfig(input: Partial<RuntimeConfig> | null | un
     priorityPlanOrder: normalizePriorityPlanOrder(raw.priorityPlanOrder ?? PRIORITY_PLAN_KEYS),
     priorityPlanRanges: normalizePriorityPlanRanges(raw.priorityPlanRanges),
     oauthSettings: normalizeOAuthSettings(raw.oauthSettings),
+    uiSettings: normalizeUiSettings(raw.uiSettings),
   };
 }
 
@@ -1669,7 +1697,7 @@ async function decryptStoredHotmailAccount(input: unknown): Promise<StoredHotmai
     ...account,
     password: await decryptStringValueOrEmpty(account.password),
     refreshToken: await decryptStringValueOrEmpty(account.refreshToken),
-    // 验证码只保留在当前 OAuth 会话里，避免长期写入浏览器存储。
+    // 验证码是短期凭据，不作为 Hotmail 账号资料长期落盘。
     lastCode: undefined,
   });
 }
@@ -1709,15 +1737,11 @@ function storedRuntimeConfigNeedsRewrite(input: StoredRuntimeConfig | null): boo
   }
   const accounts = Array.isArray(input.oauthSettings?.hotmailAccounts) ? input.oauthSettings.hotmailAccounts : [];
   return accounts.some((account) => {
-    const password = account.password;
-    const refreshToken = account.refreshToken;
-    const lastCode = account.lastCode;
     return (
-      (typeof password === "string" && password.length > 0) ||
-      (typeof refreshToken === "string" && refreshToken.length > 0) ||
-      (typeof lastCode === "string" && lastCode.length > 0) ||
-      (password !== undefined && !isEncryptedValue(password)) ||
-      (refreshToken !== undefined && !isEncryptedValue(refreshToken))
+      isEncryptedValue(account.password) ||
+      isEncryptedValue(account.refreshToken) ||
+      isEncryptedValue(account.lastCode) ||
+      (typeof account.lastCode === "string" && account.lastCode.length > 0)
     );
   });
 }
@@ -2381,24 +2405,8 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   const rawConfig = readWebStorage<StoredRuntimeConfig>(WEB_RUNTIME_CONFIG_KEY, [LEGACY_WEB_RUNTIME_CONFIG_KEY]);
   const decryptedConfig = await decryptStoredRuntimeConfig(rawConfig);
   const normalized = normalizeRuntimeConfig(decryptedConfig);
-  const shouldStripHistoricalHotmailTokens =
-    decryptedConfig?.oauthSettings &&
-    normalizeOAuthSettings(decryptedConfig.oauthSettings).rememberHotmailTokens !== true &&
-    normalized.oauthSettings.hotmailAccounts.length > 0;
-  if (shouldStripHistoricalHotmailTokens || storedRuntimeConfigNeedsRewrite(rawConfig)) {
-    const nextConfig = shouldStripHistoricalHotmailTokens
-      ? {
-          ...normalized,
-          oauthSettings: {
-            ...normalized.oauthSettings,
-            rememberHotmailTokens: false,
-            hotmailAccounts: normalized.oauthSettings.hotmailAccounts.map((account) => ({
-              ...account,
-              refreshToken: "",
-            })),
-          },
-        }
-      : normalized;
+  if (storedRuntimeConfigNeedsRewrite(rawConfig)) {
+    const nextConfig = normalized;
     writeWebStorage(
       WEB_RUNTIME_CONFIG_KEY,
       await sanitizeRuntimeConfigForStorage(nextConfig, {
@@ -2412,13 +2420,13 @@ export async function loadRuntimeConfig(): Promise<RuntimeConfig> {
   return normalized;
 }
 
-async function sanitizeHotmailAccountForStorage(account: HotmailAccount, rememberRefreshToken: boolean): Promise<Record<string, unknown>> {
+async function sanitizeHotmailAccountForStorage(account: HotmailAccount): Promise<Record<string, unknown>> {
   return cleanStorageRecord({
     id: account.id,
     email: account.email,
-    password: account.password ? await encryptStringValue(account.password) : undefined,
+    password: account.password ?? "",
     clientId: account.clientId,
-    refreshToken: rememberRefreshToken && account.refreshToken ? await encryptStringValue(account.refreshToken) : undefined,
+    refreshToken: account.refreshToken ?? "",
     status: account.status,
     lastCodeAt: account.lastCodeAt,
     lastError: account.lastError,
@@ -2428,9 +2436,9 @@ async function sanitizeHotmailAccountForStorage(account: HotmailAccount, remembe
 
 async function sanitizeRuntimeConfigForStorage(config: RuntimeConfig, options: SaveRuntimeConfigOptions = {}): Promise<Record<string, unknown>> {
   const normalized = normalizeRuntimeConfig(config);
-  const rememberHotmailTokens = options.rememberHotmailTokens ?? normalized.oauthSettings.rememberHotmailTokens;
+  const rememberHotmailTokens = true;
   const hotmailAccounts = await Promise.all(
-    normalized.oauthSettings.hotmailAccounts.map((account) => sanitizeHotmailAccountForStorage(account, rememberHotmailTokens)),
+    normalized.oauthSettings.hotmailAccounts.map((account) => sanitizeHotmailAccountForStorage(account)),
   );
   return {
     ...normalized,

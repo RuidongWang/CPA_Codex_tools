@@ -22,6 +22,10 @@ const baseConfig: RuntimeConfig = {
     rememberHotmailTokens: false,
     importedInvalidAccountEmails: [],
   },
+  uiSettings: {
+    themeMode: "system",
+    language: "zh",
+  },
 };
 
 describe("SettingsPanel", () => {
@@ -43,6 +47,8 @@ describe("SettingsPanel", () => {
     const dialog = screen.getByRole("dialog", { name: "查询设置" });
 
     expect(within(dialog).getByLabelText("并发数")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("页面模式")).toHaveValue("system");
+    expect(within(dialog).getByLabelText("语言")).toHaveValue("zh");
     expect(within(dialog).getByLabelText("禁用阈值")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("过期阈值天数")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("维护并发数")).toBeInTheDocument();
@@ -93,6 +99,10 @@ describe("SettingsPanel", () => {
         expiryThresholdDays: 2,
         enableRefresh: false,
         workerThreads: 8,
+      },
+      uiSettings: {
+        themeMode: "system",
+        language: "zh",
       },
     });
   });

@@ -4,6 +4,8 @@ const core = self.CpaCodexOAuthBackgroundCore;
 const batchCore = self.CpaCodexOAuthBackgroundBatchCore;
 const STATUS_KEY = 'cpaCodexOAuthAutoLoginStatus';
 const SETTINGS_KEY = 'cpaCodexOAuthAutoLoginSettings';
+const PLATFORM_SETTINGS_KEY = 'cpaCodexOAuthAutoLoginPlatformSettings';
+const PLATFORM_VAULT_SECRET_KEY = 'cpaCodexOAuthAutoLoginPlatformVaultSecret';
 const BRIDGE_TIMEOUT_MS = 25000;
 const EMAIL_CONTINUE_RETRIES = 4;
 const HEARTBEAT_INTERVAL_MS = 30000;
@@ -37,15 +39,19 @@ const REQUIRED_BRIDGE_ACTIONS = Object.freeze([
   'CHECK_OAUTH_STATUS',
   'RELEASE_JOB',
 ]);
+const PASSWORD_ENCRYPTION_ALGORITHM = 'AES-GCM';
+const PASSWORD_ENCRYPTION_VERSION = 1;
 
 let activeRun = null;
 let operationLog = [];
 let automationSettings = core.normalizeAutomationSettings();
+let platformSettings = core.normalizePlatformSettings();
 let lastStatus = core.createSafeStatus({
   phase: 'idle',
   message: 'Ready.',
   running: false,
   automationSettings,
+  platformSettings,
   queueSummary: null,
   currentJob: null,
   operationLog,
@@ -233,6 +239,104 @@ function chromeCallback(call) {
   });
 }
 
+function bytesToBase64(bytes) {
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function bytesToArrayBuffer(bytes) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+function bytesToBase64Url(bytes) {
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function getExtensionCrypto() {
+  if (!globalThis.crypto?.subtle || !globalThis.crypto.getRandomValues) {
+    throw new Error('当前浏览器扩展环境不支持密码加密');
+  }
+  return globalThis.crypto;
+}
+
+function randomBytes(length) {
+  const bytes = new Uint8Array(length);
+  getExtensionCrypto().getRandomValues(bytes);
+  return bytes;
+}
+
+async function getPlatformVaultSecret() {
+  const stored = await chromeCallback((done) => chrome.storage.local.get(PLATFORM_VAULT_SECRET_KEY, done)).catch(() => ({}));
+  const existing = String(stored?.[PLATFORM_VAULT_SECRET_KEY] || '').trim();
+  if (existing) {
+    return existing;
+  }
+  const generated = bytesToBase64Url(randomBytes(32));
+  await chromeCallback((done) => chrome.storage.local.set({ [PLATFORM_VAULT_SECRET_KEY]: generated }, done));
+  return generated;
+}
+
+async function derivePasswordKey(secret) {
+  const digest = await getExtensionCrypto().subtle.digest('SHA-256', new TextEncoder().encode(secret));
+  return getExtensionCrypto().subtle.importKey('raw', digest, PASSWORD_ENCRYPTION_ALGORITHM, false, ['encrypt', 'decrypt']);
+}
+
+function isEncryptedPlatformPassword(value) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && value.__encrypted === true
+    && value.v === PASSWORD_ENCRYPTION_VERSION
+    && value.alg === PASSWORD_ENCRYPTION_ALGORITHM
+    && typeof value.iv === 'string'
+    && typeof value.ciphertext === 'string'
+  );
+}
+
+async function encryptPlatformPassword(password) {
+  const iv = randomBytes(12);
+  const key = await derivePasswordKey(await getPlatformVaultSecret());
+  const ciphertext = await getExtensionCrypto().subtle.encrypt(
+    { name: PASSWORD_ENCRYPTION_ALGORITHM, iv: bytesToArrayBuffer(iv) },
+    key,
+    bytesToArrayBuffer(new TextEncoder().encode(String(password || '')))
+  );
+  return {
+    __encrypted: true,
+    v: PASSWORD_ENCRYPTION_VERSION,
+    alg: PASSWORD_ENCRYPTION_ALGORITHM,
+    iv: bytesToBase64(iv),
+    ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
+  };
+}
+
+async function decryptPlatformPassword(value) {
+  if (!isEncryptedPlatformPassword(value)) {
+    return typeof value === 'string' ? value : '';
+  }
+  const key = await derivePasswordKey(await getPlatformVaultSecret());
+  const plaintext = await getExtensionCrypto().subtle.decrypt(
+    { name: PASSWORD_ENCRYPTION_ALGORITHM, iv: bytesToArrayBuffer(base64ToBytes(value.iv)) },
+    key,
+    bytesToArrayBuffer(base64ToBytes(value.ciphertext))
+  );
+  return new TextDecoder().decode(plaintext);
+}
+
 async function loadAutomationSettings() {
   if (!chrome.storage?.local?.get) {
     automationSettings = core.normalizeAutomationSettings();
@@ -255,6 +359,79 @@ async function saveAutomationSettings(input) {
     automationSettings: settings,
   });
   return settings;
+}
+
+async function readStoredPlatformSettingsRaw() {
+  if (!chrome.storage?.local?.get) {
+    return {};
+  }
+  const stored = await chromeCallback((done) => chrome.storage.local.get(PLATFORM_SETTINGS_KEY, done)).catch(() => ({}));
+  const raw = stored?.[PLATFORM_SETTINGS_KEY];
+  return raw && typeof raw === 'object' ? raw : {};
+}
+
+function publicPlatformSettings(raw = {}) {
+  return core.normalizePlatformSettings({
+    platformBaseUrl: raw.platformBaseUrl,
+    platformPasswordSaved: Boolean(raw.encryptedPlatformPassword || raw.platformPasswordSaved),
+  });
+}
+
+async function loadPlatformSettings(options = {}) {
+  const raw = await readStoredPlatformSettingsRaw();
+  platformSettings = publicPlatformSettings(raw);
+  if (!options.includePassword) {
+    return platformSettings;
+  }
+  const platformPassword = await decryptPlatformPassword(raw.encryptedPlatformPassword).catch(() => '');
+  return {
+    ...platformSettings,
+    platformPassword,
+    platformPasswordSaved: Boolean(platformPassword || raw.encryptedPlatformPassword),
+  };
+}
+
+async function savePlatformSettings(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const normalized = core.normalizePlatformSettings(source);
+  if (String(source.platformBaseUrl || '').trim() && !normalized.platformBaseUrl) {
+    throw new Error('Web 地址无效');
+  }
+  const existing = await readStoredPlatformSettingsRaw();
+  const next = {
+    platformBaseUrl: normalized.platformBaseUrl,
+  };
+  const password = typeof source.platformPassword === 'string' ? source.platformPassword.trim() : '';
+  const savePlatformPassword = Boolean(source.savePlatformPassword);
+  if (savePlatformPassword && password) {
+    next.encryptedPlatformPassword = await encryptPlatformPassword(password);
+  } else if (savePlatformPassword && existing.encryptedPlatformPassword) {
+    next.encryptedPlatformPassword = existing.encryptedPlatformPassword;
+  }
+
+  if (chrome.storage?.local?.set) {
+    await chromeCallback((done) => chrome.storage.local.set({ [PLATFORM_SETTINGS_KEY]: next }, done));
+  }
+  platformSettings = publicPlatformSettings(next);
+  setStatus({
+    phase: lastStatus.phase || 'idle',
+    message: lastStatus.message || 'Ready.',
+    platformSettings,
+  });
+  return platformSettings;
+}
+
+async function resetPlatformSettings() {
+  if (chrome.storage?.local?.remove) {
+    await chromeCallback((done) => chrome.storage.local.remove(PLATFORM_SETTINGS_KEY, done));
+  }
+  platformSettings = core.normalizePlatformSettings();
+  setStatus({
+    phase: lastStatus.phase || 'idle',
+    message: lastStatus.message || 'Ready.',
+    platformSettings,
+  });
+  return platformSettings;
 }
 
 function queryTabs(queryInfo) {
@@ -313,26 +490,28 @@ function createOpenAIActionError(action, response) {
   return error;
 }
 
-async function getPreferredLocalAppTab(errorMessage = 'Open the local CPA Codex app tab before starting auto-login.') {
+async function getPreferredAppTab(errorMessage = 'Open the configured CPA Codex app tab before starting auto-login.') {
+  const settings = await loadPlatformSettings();
   const activeTabs = await queryTabs({ active: true, currentWindow: true });
-  const activeLocalTab = core.pickPreferredLocalAppTab(activeTabs);
-  if (activeLocalTab) {
-    return activeLocalTab;
+  const activeAppTab = core.pickPreferredAppTab(activeTabs, settings);
+  if (activeAppTab) {
+    return activeAppTab;
   }
 
   const tabs = await queryTabs({ currentWindow: true });
-  const localTab = core.pickPreferredLocalAppTab(tabs);
-  if (localTab) {
-    return localTab;
+  const appTab = core.pickPreferredAppTab(tabs, settings);
+  if (appTab) {
+    return appTab;
   }
 
   const allTabs = await queryTabs({});
-  const anyLocalTab = core.pickPreferredLocalAppTab(allTabs);
-  if (anyLocalTab) {
-    return anyLocalTab;
+  const anyAppTab = core.pickPreferredAppTab(allTabs, settings);
+  if (anyAppTab) {
+    return anyAppTab;
   }
 
-  throw new Error(errorMessage);
+  const target = settings.platformBaseUrl || 'http://localhost 或 http://127.0.0.1';
+  throw new Error(`${errorMessage} Target: ${target}`);
 }
 
 async function callCpaBridge(tabId, action, payload = {}) {
@@ -1025,7 +1204,7 @@ async function closeAuthTab(run) {
 }
 
 async function submitJobCallback(run, job, context, callbackUrl) {
-  const parsed = core.parseCallbackUrl(callbackUrl);
+  const parsed = core.parseCallbackUrl(callbackUrl, platformSettings);
   if (!parsed.ok) {
     throw createFlowError('fatal', parsed.reason || 'invalid_callback_url', `Ignoring invalid callback URL: ${parsed.reason}`);
   }
@@ -1264,7 +1443,7 @@ async function runSingleJobAttempt(run, job) {
     }
 
     const tab = await getTab(run.authTabId);
-    if (core.isCallbackUrl(tab.url)) {
+    if (core.isCallbackUrl(tab.url, platformSettings)) {
       await submitJobCallback(run, activeJob, context, tab.url);
       return { ok: true };
     }
@@ -1354,7 +1533,7 @@ async function waitWhilePaused(run) {
 async function runBatch(run) {
   try {
     await loadAutomationSettings();
-    const localTab = await getPreferredLocalAppTab('Open the local CPA Codex app tab before starting batch auto-login.');
+    const localTab = await getPreferredAppTab('Open the configured CPA Codex app tab before starting batch auto-login.');
     run.localTabId = localTab.id;
     setStatus({ phase: 'bridge_capabilities', message: 'Checking CPA OAuth bridge capabilities.' });
     await requireBridgeV2(localTab.id);
@@ -1477,7 +1656,7 @@ function resumeBatch() {
 }
 
 async function readAccountPools() {
-  const localTab = await getPreferredLocalAppTab('Open the local CPA Codex app tab before reading account pools.');
+  const localTab = await getPreferredAppTab('Open the configured CPA Codex app tab before reading account pools.');
   const result = await callCpaBridge(localTab.id, 'GET_ACCOUNT_POOLS');
   if (!result.pools && (Array.isArray(result.invalidAccounts) || Array.isArray(result.hotmailAccounts))) {
     return {
@@ -1495,7 +1674,7 @@ async function readAccountPools() {
 }
 
 async function buildQueue(payload = {}) {
-  const localTab = await getPreferredLocalAppTab('Open the local CPA Codex app tab before building the OAuth queue.');
+  const localTab = await getPreferredAppTab('Open the configured CPA Codex app tab before building the OAuth queue.');
   await requireBridgeV2(localTab.id);
   const result = await callCpaBridge(localTab.id, 'BUILD_QUEUE', payload);
   setStatus({
@@ -1511,16 +1690,17 @@ function handleNavigation(details) {
   if (!activeRun || details.tabId !== activeRun.authTabId || !details.url) {
     return;
   }
-  if (core.isCallbackUrl(details.url)) {
+  if (core.isCallbackUrl(details.url, platformSettings)) {
     activeRun.callbackUrl = details.url;
   }
 }
 
-loadAutomationSettings()
-  .then((settings) => {
+Promise.all([loadAutomationSettings(), loadPlatformSettings()])
+  .then(([settings, nextPlatformSettings]) => {
     lastStatus = core.createSafeStatus({
       ...lastStatus,
       automationSettings: settings,
+      platformSettings: nextPlatformSettings,
     });
     persistStatus(lastStatus);
   })
@@ -1567,6 +1747,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (message.action === 'GET_SETTINGS') {
     loadAutomationSettings()
+      .then((settings) => sendResponse({ ok: true, result: { settings }, status: lastStatus }))
+      .catch((error) => sendResponse({ ok: false, error: makeErrorMessage(error), status: lastStatus }));
+    return true;
+  }
+  if (message.action === 'GET_PLATFORM_SETTINGS') {
+    loadPlatformSettings()
+      .then((settings) => sendResponse({ ok: true, result: { settings }, status: lastStatus }))
+      .catch((error) => sendResponse({ ok: false, error: makeErrorMessage(error), status: lastStatus }));
+    return true;
+  }
+  if (message.action === 'SAVE_PLATFORM_SETTINGS') {
+    savePlatformSettings(message.payload || {})
+      .then((settings) => sendResponse({ ok: true, result: { settings }, status: lastStatus }))
+      .catch((error) => sendResponse({ ok: false, error: makeErrorMessage(error), status: lastStatus }));
+    return true;
+  }
+  if (message.action === 'RESET_PLATFORM_SETTINGS') {
+    resetPlatformSettings()
       .then((settings) => sendResponse({ ok: true, result: { settings }, status: lastStatus }))
       .catch((error) => sendResponse({ ok: false, error: makeErrorMessage(error), status: lastStatus }));
     return true;

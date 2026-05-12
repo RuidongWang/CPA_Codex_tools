@@ -1,9 +1,9 @@
 import type { Ref } from "react";
+import { useI18n } from "../lib/i18n";
 
 interface ToolbarProps {
   loadingLabel: string;
   lastUpdated: string;
-  backupLabel: string;
   canBackupAccounts: boolean;
   canOpenPriorityBatch: boolean;
   canQuerySelected: boolean;
@@ -31,38 +31,43 @@ const STATUS_LABELS: Record<string, string> = {
   unknown: "未查",
 };
 
-function buildBusyCopy(mode: ToolbarProps["busyMode"], label: string): string {
+function buildBusyCopy(mode: ToolbarProps["busyMode"], label: string, t: ReturnType<typeof useI18n>["t"]): string {
   if (mode === "query-one") {
-    return label || "正在查询选中的账号";
+    return label || t("toolbar.busyQuery");
   }
   if (mode === "download") {
-    return label || "正在下载远端账号";
+    return label || t("toolbar.busyDownload");
   }
   if (mode === "sync") {
-    return label || "正在同步优先级";
+    return label || t("toolbar.busySync");
   }
   if (mode === "keeper") {
-    return label || "正在执行 Keeper 维护";
+    return label || t("toolbar.busyKeeper");
   }
   if (mode === "list" || mode === "bootstrap") {
-    return label || "正在加载账号列表";
+    return label || t("toolbar.busyList");
   }
-  return label || "空闲";
+  return label || t("toolbar.idle");
 }
 
 // 工具条集中放加载、查询和优先级动作，避免用户在多个区域来回找入口。
 export function Toolbar(props: ToolbarProps) {
-  const busyCopy = buildBusyCopy(props.busyMode, props.loadingLabel);
+  const { t } = useI18n();
+  const busyCopy = buildBusyCopy(props.busyMode, props.loadingLabel, t);
+  const statusLabel = t(`status.${props.selectedStatus}` as Parameters<typeof t>[0]) || STATUS_LABELS[props.selectedStatus] || props.selectedStatus;
   const currentViewLabel =
     props.selectedStatus === "all"
-      ? "当前视图 全部状态"
-      : `当前视图 ${STATUS_LABELS[props.selectedStatus] ?? props.selectedStatus}`;
-  const lastUpdatedLabel = props.lastUpdated ? `最近更新 ${props.lastUpdated}` : "尚未查询";
+      ? t("toolbar.currentViewAll")
+      : t("toolbar.currentView", { status: statusLabel });
+  const lastUpdatedLabel = props.lastUpdated ? t("toolbar.lastUpdated", { time: props.lastUpdated }) : t("toolbar.notQueried");
+  const backupLabel = props.selectedCount > 0
+    ? t("toolbar.downloadSelected", { count: props.selectedCount })
+    : t("toolbar.downloadAll");
 
   return (
     <section ref={props.rootRef} className="command-bar">
       <div className="command-bar__header">
-        <p className="panel-heading__eyebrow">操作台</p>
+        <p className="panel-heading__eyebrow">{t("toolbar.console")}</p>
         <div className="command-bar__meta">
           <span className={props.isBusy ? "command-bar__status command-bar__status--busy" : "command-bar__status"}>{busyCopy}</span>
           <span>{currentViewLabel}</span>
@@ -72,7 +77,7 @@ export function Toolbar(props: ToolbarProps) {
       <div className="command-bar__actions">
         <div className="command-bar__action-group">
           <button type="button" className="command-button command-button--primary" onClick={props.onLoadAccounts} disabled={props.isBusy}>
-            加载账号
+            {t("toolbar.loadAccounts")}
           </button>
           <button
             type="button"
@@ -80,7 +85,7 @@ export function Toolbar(props: ToolbarProps) {
             onClick={props.onQuerySelected}
             disabled={!props.canQuerySelected || props.isBusy}
           >
-            {props.busyMode === "query-one" ? "查询中" : `查询选中账号 (${props.selectedCount})`}
+            {props.busyMode === "query-one" ? t("toolbar.querying") : t("toolbar.querySelected", { count: props.selectedCount })}
           </button>
         </div>
         <div className="command-bar__action-group">
@@ -90,7 +95,7 @@ export function Toolbar(props: ToolbarProps) {
             onClick={props.onOpenPriorityBatch}
             disabled={!props.canOpenPriorityBatch || props.isBusy}
           >
-            批量设置优先级
+            {t("toolbar.batchPriority")}
           </button>
           <button
             type="button"
@@ -98,7 +103,7 @@ export function Toolbar(props: ToolbarProps) {
             onClick={props.onDiscardPriorityDrafts}
             disabled={!props.canDiscardPriorityDrafts || props.isBusy}
           >
-            清除本地草稿
+            {t("toolbar.clearDrafts")}
           </button>
           <button
             type="button"
@@ -106,7 +111,7 @@ export function Toolbar(props: ToolbarProps) {
             onClick={props.onBackupAccounts}
             disabled={!props.canBackupAccounts || props.isBusy}
           >
-            {props.busyMode === "download" ? "下载中" : props.backupLabel}
+            {props.busyMode === "download" ? t("toolbar.downloading") : backupLabel}
           </button>
           <button
             type="button"
@@ -114,7 +119,7 @@ export function Toolbar(props: ToolbarProps) {
             onClick={props.onSyncPriorities}
             disabled={!props.canSyncPriorities || props.isBusy}
           >
-            {props.busyMode === "sync" ? "同步中" : "同步到远端"}
+            {props.busyMode === "sync" ? t("toolbar.syncing") : t("toolbar.sync")}
           </button>
         </div>
       </div>

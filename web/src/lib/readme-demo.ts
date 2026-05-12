@@ -22,6 +22,10 @@ export const README_DEMO_CONFIG: RuntimeConfig = {
     rememberHotmailTokens: false,
     importedInvalidAccountEmails: [],
   },
+  uiSettings: {
+    themeMode: "dark",
+    language: "zh",
+  },
 };
 
 // 文档截图只展示当前页面能力，不依赖任何真实账号或实时后端。

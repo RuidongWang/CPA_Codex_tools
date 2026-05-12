@@ -51,6 +51,14 @@ test('manifest host permissions are narrow local app and OpenAI auth hosts', () 
   assert.equal(manifest.host_permissions.includes('<all_urls>'), false);
 });
 
+test('manifest requests remote CPA platform hosts only as optional permissions', () => {
+  const manifest = readManifest();
+  assert.deepEqual([...manifest.optional_host_permissions].sort(), [
+    'http://*/*',
+    'https://*/*',
+  ]);
+});
+
 test('manifest content scripts match only local app and OpenAI auth hosts', () => {
   const manifest = readManifest();
   const allMatches = manifest.content_scripts.flatMap((script) => script.matches).sort();

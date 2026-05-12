@@ -34,6 +34,34 @@
   --font-mono: "IBM Plex Mono", "Cascadia Mono", "Consolas", monospace;
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  --background: #f5f8fc;
+  --background-soft: #edf3fa;
+  --surface: #ffffff;
+  --surface-2: #f8fbff;
+  --surface-3: #eef4fb;
+  --surface-4: #e5eef8;
+  --surface-5: #d9e7f5;
+  --outline: rgba(54, 83, 116, 0.16);
+  --outline-strong: rgba(54, 132, 190, 0.34);
+  --text-primary: #142131;
+  --text-secondary: #3d4d61;
+  --text-muted: #6f7d90;
+  --accent: #117fc0;
+  --accent-soft: rgba(17, 127, 192, 0.12);
+  --accent-strong: #075d93;
+  --success: #168f76;
+  --success-soft: rgba(22, 143, 118, 0.12);
+  --warning: #bd7417;
+  --warning-soft: rgba(189, 116, 23, 0.12);
+  --danger: #c73552;
+  --danger-soft: rgba(199, 53, 82, 0.12);
+  --neutral-soft: rgba(75, 95, 120, 0.1);
+  --shadow-lg: 0 22px 60px rgba(35, 55, 82, 0.14);
+  --shadow-md: 0 14px 36px rgba(35, 55, 82, 0.1);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -63,8 +91,107 @@ body {
   line-height: 1.45;
 }
 
+html[data-theme="light"] {
+  background: #f5f8fc;
+}
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 0% 0%, rgba(17, 127, 192, 0.14), transparent 24%),
+    radial-gradient(circle at 100% 0%, rgba(22, 143, 118, 0.1), transparent 20%),
+    linear-gradient(180deg, #f6f9fd 0%, #eef4fb 100%);
+}
+
+:root[data-theme="light"] .login-shell,
+:root[data-theme="light"] .login-brand-panel,
+:root[data-theme="light"] .login-form-panel,
+:root[data-theme="light"] .login-card,
+:root[data-theme="light"] .rail,
+:root[data-theme="light"] .stitch-main,
+:root[data-theme="light"] .window-chrome,
+:root[data-theme="light"] .command-bar,
+:root[data-theme="light"] .plan-filter-strip,
+:root[data-theme="light"] .metric-grid,
+:root[data-theme="light"] .scan-progress,
+:root[data-theme="light"] .grid-panel,
+:root[data-theme="light"] .config-panel,
+:root[data-theme="light"] .keeper-panel,
+:root[data-theme="light"] .keeper-selected-actions,
+:root[data-theme="light"] .keeper-duplicate-review,
+:root[data-theme="light"] .settings-dialog,
+:root[data-theme="light"] .settings-dialog__section,
+:root[data-theme="light"] .settings-section,
+:root[data-theme="light"] .oauth-page,
+:root[data-theme="light"] .oauth-card,
+:root[data-theme="light"] .oauth-panel,
+:root[data-theme="light"] .priority-order-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 249, 253, 0.96)),
+    var(--surface);
+}
+
+:root[data-theme="light"] .login-brand-copy span {
+  color: rgba(20, 33, 49, 0.92);
+}
+
+:root[data-theme="light"] .login-brand-copy span:nth-child(2) {
+  color: rgba(17, 127, 192, 0.72);
+}
+
+:root[data-theme="light"] .login-brand-copy span:nth-child(3) {
+  color: rgba(22, 143, 118, 0.62);
+}
+
+:root[data-theme="light"] .command-field,
+:root[data-theme="light"] .settings-field input,
+:root[data-theme="light"] .settings-field select,
+:root[data-theme="light"] .priority-order-card__range-controls input,
+:root[data-theme="light"] .plan-filter-button,
+:root[data-theme="light"] button.metric-card,
+:root[data-theme="light"] .rail-button,
+:root[data-theme="light"] .command-button,
+:root[data-theme="light"] .account-row,
+:root[data-theme="light"] .account-card,
+:root[data-theme="light"] .keeper-duplicate-item {
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] .command-button--primary,
+:root[data-theme="light"] .plan-filter-button--active,
+:root[data-theme="light"] .metric-card--active,
+:root[data-theme="light"] .rail-button--active {
+  background: linear-gradient(180deg, rgba(17, 127, 192, 0.16), rgba(17, 127, 192, 0.06));
+  color: var(--accent-strong);
+}
+
+:root[data-theme="light"] .command-button--danger {
+  background: linear-gradient(135deg, rgba(199, 53, 82, 0.12), rgba(189, 116, 23, 0.1));
+  color: var(--danger);
+}
+
+:root[data-theme="light"] .config-url-notice--warning {
+  color: #8b520f;
+}
+
+:root[data-theme="light"] .config-url-notice--danger,
+:root[data-theme="light"] .login-error {
+  color: #9c263e;
+}
+
+:root[data-theme="light"] .scan-progress__track,
+:root[data-theme="light"] .quota-cell__track,
+:root[data-theme="light"] .account-card__quota-track {
+  background: rgba(71, 91, 115, 0.18);
+}
+
+:root[data-theme="light"] .settings-dialog__backdrop:is(*) {
+  background: rgba(231, 238, 247, 0.62);
+}
+
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -547,7 +674,7 @@ input {
 
 .command-bar,
 .plan-filter-strip,
-.metric-card,
+.metric-grid,
 .scan-progress,
 .grid-panel,
 .config-panel,
@@ -818,24 +945,36 @@ input {
 }
 
 .metric-grid {
-  margin: 12px 24px 0;
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
+  margin: 10px 24px 0;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 18px;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .metric-card {
-  min-height: 78px;
-  padding: 12px 14px;
-  border-radius: 18px;
+  flex: 0 0 172px;
+  min-width: 0;
+  min-height: 48px;
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 14px;
   text-align: left;
   position: relative;
   overflow: hidden;
 }
 
 button.metric-card {
-  width: 100%;
-  border: 1px solid var(--outline);
+  width: auto;
+  border: 1px solid rgba(134, 168, 205, 0.14);
+  background: rgba(7, 13, 22, 0.36);
+  color: var(--text-secondary);
   cursor: pointer;
   transition:
     border-color 160ms ease,
@@ -845,56 +984,55 @@ button.metric-card {
 
 button.metric-card:hover,
 button.metric-card:focus-visible {
-  border-color: rgba(114, 194, 255, 0.3);
-  background: linear-gradient(180deg, rgba(27, 40, 57, 0.98), rgba(19, 29, 43, 0.98));
+  border-color: rgba(114, 194, 255, 0.28);
+  background: rgba(114, 194, 255, 0.08);
+  color: var(--text-primary);
   outline: none;
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
 .metric-card--active {
   border-color: rgba(114, 194, 255, 0.42) !important;
+  background: linear-gradient(180deg, rgba(114, 194, 255, 0.2), rgba(114, 194, 255, 0.08));
   box-shadow: inset 0 0 0 1px rgba(114, 194, 255, 0.1);
 }
 
-.metric-card__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.metric-card__top .material-symbols-outlined {
-  font-size: 18px;
+.metric-card > .material-symbols-outlined {
+  font-size: 20px;
 }
 
 .metric-card__label {
-  margin: 0;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .metric-card__value {
   display: block;
-  margin-top: 12px;
-  font-size: 30px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 13px;
   line-height: 1;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
 .metric-card--healthy .metric-card__label,
-.metric-card--healthy .material-symbols-outlined {
+.metric-card--healthy > .material-symbols-outlined {
   color: var(--success);
 }
 
 .metric-card--warning .metric-card__label,
-.metric-card--warning .material-symbols-outlined {
+.metric-card--warning > .material-symbols-outlined {
   color: var(--warning);
 }
 
 .metric-card--danger .metric-card__label,
-.metric-card--danger .material-symbols-outlined {
+.metric-card--danger > .material-symbols-outlined {
   color: var(--danger);
 }
 
@@ -1044,11 +1182,17 @@ button.metric-card:focus-visible {
 }
 
 .oauth-page__actions,
+.oauth-status-actions,
 .oauth-auth-url,
 .oauth-inline-field {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.oauth-status-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .oauth-layout {
@@ -1250,7 +1394,8 @@ button.metric-card:focus-visible {
   font-size: 13px;
 }
 
-.oauth-token-toggle {
+.oauth-token-toggle,
+.oauth-token-persistence-note {
   min-height: 34px;
   display: inline-flex;
   align-items: center;
@@ -1262,6 +1407,10 @@ button.metric-card:focus-visible {
   color: var(--text-secondary);
   font-size: 12px;
   font-weight: 700;
+}
+
+.oauth-token-persistence-note {
+  line-height: 1.45;
 }
 
 .oauth-token-toggle input {
@@ -2294,7 +2443,8 @@ button.metric-card:focus-visible {
   font-weight: 600;
 }
 
-.settings-field input {
+.settings-field input,
+.settings-field select {
   width: 100%;
   height: 40px;
   padding: 0 12px;
@@ -2313,7 +2463,8 @@ button.metric-card:focus-visible {
   height: 34px;
 }
 
-.settings-field input:focus {
+.settings-field input:focus,
+.settings-field select:focus {
   border-color: rgba(122, 162, 255, 0.6);
   box-shadow: inset 0 0 0 1px rgba(122, 162, 255, 0.18);
 }
@@ -2322,6 +2473,10 @@ button.metric-card:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
+}
+
+.settings-field-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .settings-toggle {
@@ -2729,6 +2884,10 @@ button.metric-card:focus-visible {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .oauth-status-actions {
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 720px) {
@@ -2918,7 +3077,8 @@ button.metric-card:focus-visible {
     white-space: normal;
   }
 
-  .plan-filter-strip {
+  .plan-filter-strip,
+  .metric-grid {
     padding: 8px;
   }
 
@@ -2933,10 +3093,6 @@ button.metric-card:focus-visible {
 
   .plan-filter-button {
     min-width: 104px;
-  }
-
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .keeper-panel__header,
@@ -2964,12 +3120,13 @@ button.metric-card:focus-visible {
   }
 
   .metric-card {
-    min-height: 72px;
-    border-radius: 16px;
+    flex-basis: 154px;
+    min-height: 48px;
+    border-radius: 14px;
   }
 
   .metric-card__value {
-    font-size: 25px;
+    font-size: 13px;
   }
 
   .scan-progress {
@@ -3037,7 +3194,4 @@ button.metric-card:focus-visible {
     text-align: left;
   }
 
-  .metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }

@@ -174,7 +174,7 @@ function searchableText(parts: Array<string | undefined | null>): string {
 function includeHotmailTokenPersistence(settings: OAuthSettingsWithHotmailTokenPersistence): PersistedOAuthSettings {
   return {
     ...settings,
-    rememberHotmailTokens: Boolean(settings.rememberHotmailTokens),
+    rememberHotmailTokens: true,
   };
 }
 
@@ -277,7 +277,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
   const statusTargetEmail = visibleSession?.targetEmail || selectedAccount?.email || "";
   const statusState = visibleSession?.state || "";
   const statusCode = visibleSession ? latestCode : "";
-  const rememberHotmailTokens = includeHotmailTokenPersistence(props.settings).rememberHotmailTokens;
+  const rememberHotmailTokens = true;
   const queueJobs = props.queueJobs ?? [];
   const queueSummary = props.queueSummary ?? summarizeQueueJobs(queueJobs);
   const queueOAuthSuccessCount = queueJobs.filter((job) => job.oauthStatus === "success").length;
@@ -339,7 +339,7 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
     };
     await props.onSettingsChange({
       ...mergedSettings,
-      rememberHotmailTokens: Boolean(mergedSettings.rememberHotmailTokens),
+      rememberHotmailTokens: true,
       hotmailHelperUrl: normalizeHotmailHelperUrl(mergedSettings.hotmailHelperUrl),
     });
   }
@@ -647,14 +647,6 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
           <p className="eyebrow">CODEX OAUTH</p>
           <h1>Codex OAuth登录</h1>
         </div>
-        <div className="oauth-page__actions">
-          <button type="button" className="command-button" onClick={handleFetchHotmailCode} disabled={busy || !selectedHotmail}>
-            获取 Hotmail 验证码
-          </button>
-          <button type="button" className="command-button command-button--primary" onClick={handleStartOAuth} disabled={busy || !props.ready || !selectedAccount}>
-            发起 OAuth登录
-          </button>
-        </div>
       </div>
 
       {errorMessage ? <div className="inline-alert" role="alert">{errorMessage}</div> : null}
@@ -794,20 +786,9 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
               rows={4}
             />
           </label>
-          <label className="oauth-token-toggle">
-            <input
-              type="checkbox"
-              checked={rememberHotmailTokens}
-              onChange={(event) =>
-                persistSettings({
-                  ...props.settings,
-                  hotmailHelperUrl: helperUrl,
-                  rememberHotmailTokens: event.target.checked,
-                })
-              }
-            />
-            <span>本地持久保存 Hotmail Token</span>
-          </label>
+          <div className="oauth-token-persistence-note" role="note">
+            Hotmail 账号信息会以明文保存在本地浏览器中，验证码仅保留本次会话和获取时间。
+          </div>
           <button type="button" className="command-button" onClick={handleImportHotmailAccounts} disabled={busy}>
             导入 Hotmail 账号
           </button>
@@ -848,9 +829,17 @@ export function CodexOAuthPanel(props: CodexOAuthPanelProps) {
         <section className="settings-section oauth-card" aria-label="OAuth 状态">
           <div className="settings-section__header">
             <h3>OAuth 状态</h3>
-            <button type="button" className="command-button" onClick={handleCheckStatus} disabled={busy || !visibleSession?.state}>
-              检查登录状态
-            </button>
+            <div className="oauth-status-actions">
+              <button type="button" className="command-button" onClick={handleFetchHotmailCode} disabled={busy || !selectedHotmail}>
+                获取 Hotmail 验证码
+              </button>
+              <button type="button" className="command-button command-button--primary" onClick={handleStartOAuth} disabled={busy || !props.ready || !selectedAccount}>
+                发起 OAuth登录
+              </button>
+              <button type="button" className="command-button" onClick={handleCheckStatus} disabled={busy || !visibleSession?.state}>
+                检查登录状态
+              </button>
+            </div>
           </div>
           <div className="oauth-status-grid">
             <span>目标账号</span>

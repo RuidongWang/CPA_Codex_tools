@@ -1,3 +1,4 @@
+import { useI18n } from "../lib/i18n";
 import { PLAN_NAV_ITEMS } from "../lib/view-model";
 
 interface PlanFilterBarProps {
@@ -10,14 +11,16 @@ interface PlanFilterBarProps {
 }
 
 export function PlanFilterBar(props: PlanFilterBarProps) {
+  const { t } = useI18n();
   const allCount = Object.values(props.planCounts).reduce((sum, count) => sum + count, 0);
 
   return (
-    <nav className="plan-filter-strip" aria-label="计划筛选">
+    <nav className="plan-filter-strip" aria-label={t("plan.nav")}>
       <div className="plan-filter-strip__items">
         {PLAN_NAV_ITEMS.map((item) => {
           const count = item.key === "all" ? allCount : (props.planCounts[item.key] ?? 0);
           const active = props.selectedPlan === item.key;
+          const label = item.key === "all" ? t("plan.all") : item.key === "unknown" ? t("plan.unknown") : item.label;
           return (
             <button
               key={item.key}
@@ -27,7 +30,7 @@ export function PlanFilterBar(props: PlanFilterBarProps) {
               onClick={() => props.onPlanChange(item.key)}
             >
               <span className="material-symbols-outlined">{item.icon}</span>
-              <span className="plan-filter-button__label">{item.label}</span>
+              <span className="plan-filter-button__label">{label}</span>
               <span className="plan-filter-button__count">{count}</span>
             </button>
           );
@@ -40,7 +43,7 @@ export function PlanFilterBar(props: PlanFilterBarProps) {
           value={props.search}
           disabled={props.busy}
           onChange={(event) => props.onSearchChange(event.target.value)}
-          placeholder="按邮箱搜索"
+          placeholder={t("plan.search")}
         />
       </label>
     </nav>

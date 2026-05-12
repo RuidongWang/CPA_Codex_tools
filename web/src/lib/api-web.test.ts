@@ -1079,7 +1079,7 @@ describe("browser runtime api", () => {
     await expect(loadRuntimeConfig()).resolves.toEqual(expect.objectContaining({ managementKey: "legacy-key" }));
   });
 
-  it("loadRuntimeConfig 会迁移加密历史 Hotmail 密码并清理未显式允许保存的 Token", async () => {
+  it("loadRuntimeConfig 保留 Hotmail 明文账号信息，不再按旧开关清理 Token", async () => {
     window.localStorage.setItem(
       "cpa_codex_quota_cache.runtime-config",
       JSON.stringify({
@@ -1104,18 +1104,18 @@ describe("browser runtime api", () => {
     const config = await loadRuntimeConfig();
     const stored = String(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config"));
 
-    expect(config.oauthSettings.rememberHotmailTokens).toBe(false);
+    expect(config.oauthSettings.rememberHotmailTokens).toBe(true);
     expect(config.oauthSettings.hotmailAccounts).toEqual([
       expect.objectContaining({
         email: "a@hotmail.com",
         password: "mail-password",
         clientId: "client-id",
-        refreshToken: "",
+        refreshToken: "refresh-token",
         lastCode: undefined,
       }),
     ]);
-    expect(stored).not.toContain("mail-password");
-    expect(stored).not.toContain("refresh-token");
+    expect(stored).toContain("mail-password");
+    expect(stored).toContain("refresh-token");
     expect(stored).not.toContain("123456");
   });
 
@@ -1221,7 +1221,7 @@ describe("browser runtime api", () => {
     await expect(loadRuntimeConfig()).resolves.toEqual(expect.objectContaining({ managementKey: "example-management-key" }));
   });
 
-  it("saveRuntimeConfig preserves encrypted Hotmail passwords while avoiding management key and token persistence", async () => {
+  it("saveRuntimeConfig stores Hotmail account credentials in plaintext while avoiding management key persistence", async () => {
     await saveRuntimeConfig(
       {
         ...demoConfig,
@@ -1247,34 +1247,30 @@ describe("browser runtime api", () => {
 
     const stored = JSON.parse(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "{}") as RuntimeConfig;
     expect(stored.managementKey).toBe("");
-    expect(stored.oauthSettings.rememberHotmailTokens).toBe(false);
+    expect(stored.oauthSettings.rememberHotmailTokens).toBe(true);
     expect(stored.oauthSettings.hotmailAccounts).toHaveLength(1);
     expect(stored.oauthSettings.hotmailAccounts[0]).toEqual(
       expect.objectContaining({
         email: "a@hotmail.com",
-        clientId: "client-id",
-      }),
-    );
-    expect(stored.oauthSettings.hotmailAccounts[0]).not.toEqual(
-      expect.objectContaining({
         password: "hotmail-password",
+        clientId: "client-id",
         refreshToken: "refresh-token",
       }),
     );
     expect(stored.oauthSettings.importedInvalidAccountEmails).toEqual(["bad@outlook.com"]);
-    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("hotmail-password");
-    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("refresh-token");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("hotmail-password");
+    expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).toContain("refresh-token");
     expect(window.localStorage.getItem("cpa_codex_quota_cache.runtime-config")).not.toContain("123456");
     await expect(loadRuntimeConfig()).resolves.toEqual(
       expect.objectContaining({
         managementKey: "",
         oauthSettings: expect.objectContaining({
-          rememberHotmailTokens: false,
+          rememberHotmailTokens: true,
           hotmailAccounts: [
             expect.objectContaining({
               email: "a@hotmail.com",
               password: "hotmail-password",
-              refreshToken: "",
+              refreshToken: "refresh-token",
               lastCode: undefined,
             }),
           ],
@@ -1283,7 +1279,7 @@ describe("browser runtime api", () => {
     );
   });
 
-  it("saveRuntimeConfig encrypts persisted management and Hotmail secrets when explicitly allowed", async () => {
+  it("saveRuntimeConfig encrypts management key but keeps Hotmail credentials plaintext", async () => {
     (window as typeof window & { __CPA_CODEX_VAULT_SECRET__?: string }).__CPA_CODEX_VAULT_SECRET__ = "test-deployment-secret";
     await saveRuntimeConfig(
       {
@@ -1310,13 +1306,13 @@ describe("browser runtime api", () => {
 
     const storedText = window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "";
     expect(storedText).not.toContain("example-management-key");
-    expect(storedText).not.toContain("hotmail-password");
-    expect(storedText).not.toContain("refresh-token");
+    expect(storedText).toContain("hotmail-password");
+    expect(storedText).toContain("refresh-token");
     expect(storedText).not.toContain("123456");
 
     const stored = JSON.parse(storedText) as RuntimeConfig;
     expect(stored.oauthSettings.rememberHotmailTokens).toBe(true);
-    expect(stored.oauthSettings.hotmailAccounts[0]).not.toEqual(
+    expect(stored.oauthSettings.hotmailAccounts[0]).toEqual(
       expect.objectContaining({
         password: "hotmail-password",
         refreshToken: "refresh-token",
@@ -1379,7 +1375,7 @@ describe("browser runtime api", () => {
     });
   });
 
-  it("loadRuntimeConfig migrates legacy plaintext Hotmail secrets into encrypted storage", async () => {
+  it("loadRuntimeConfig keeps plaintext Hotmail credentials when rewriting runtime config", async () => {
     (window as typeof window & { __CPA_CODEX_VAULT_SECRET__?: string }).__CPA_CODEX_VAULT_SECRET__ = "test-deployment-secret";
     window.localStorage.setItem(
       "cpa_codex_quota_cache.runtime-config",
@@ -1412,8 +1408,8 @@ describe("browser runtime api", () => {
     );
 
     const storedText = window.localStorage.getItem("cpa_codex_quota_cache.runtime-config") ?? "";
-    expect(storedText).not.toContain("legacy-password");
-    expect(storedText).not.toContain("legacy-refresh-token");
+    expect(storedText).toContain("legacy-password");
+    expect(storedText).toContain("legacy-refresh-token");
     expect(storedText).not.toContain("654321");
   });
 

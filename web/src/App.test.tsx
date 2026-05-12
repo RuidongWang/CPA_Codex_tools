@@ -92,6 +92,10 @@ vi.mock("./lib/api", () => ({
     enableRefresh: true,
     workerThreads: 6,
   },
+  DEFAULT_UI_SETTINGS: {
+    themeMode: "system",
+    language: "zh",
+  },
   inspectManagementBaseUrl: mockApi.inspectManagementBaseUrl,
   loadRuntimeConfig: mockApi.loadRuntimeConfig,
   loadPayloadCache: mockApi.loadPayloadCache,
@@ -390,7 +394,7 @@ describe("App", () => {
         cpaBaseUrl: "https://cpa.example/",
         managementKey: "demo-key",
       }),
-      expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+      expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: true }),
     );
   });
 
@@ -513,7 +517,7 @@ describe("App", () => {
           cpaBaseUrl: "https://cpa.example/",
           managementKey: "demo-key",
         }),
-        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: true }),
       );
     });
   });
@@ -547,12 +551,12 @@ describe("App", () => {
             ],
           }),
         }),
-        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: true }),
       );
     });
   });
 
-  it("导入 Hotmail 账号时默认不要求持久化 token", async () => {
+  it("导入 Hotmail 账号时固定持久化 token 供验证码流程使用", async () => {
     const user = userEvent.setup();
     render(<App />);
 
@@ -578,7 +582,7 @@ describe("App", () => {
             ],
           }),
         }),
-        expect.objectContaining({ rememberHotmailTokens: false }),
+        expect.objectContaining({ rememberHotmailTokens: true }),
       );
     });
   });
@@ -991,7 +995,7 @@ describe("App", () => {
             workerThreads: 9,
           }),
         }),
-        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: true }),
       );
     });
   });
@@ -1156,7 +1160,7 @@ describe("App", () => {
         expect.objectContaining({
           queryConcurrency: 4,
         }),
-        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: false }),
+        expect.objectContaining({ rememberManagementKey: true, rememberHotmailTokens: true }),
       );
     });
   });

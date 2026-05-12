@@ -120,6 +120,44 @@ describe("CodexOAuthPanel", () => {
     expect(within(queue).getByText("callback-success@outlook.com")).toBeInTheDocument();
   });
 
+  it("places OAuth action buttons inside the status panel", () => {
+    render(
+      <CodexOAuthPanel
+        items={[makeAccount()]}
+        settings={{
+          ...emptySettings,
+          hotmailAccounts: [
+            {
+              id: "a@hotmail.com::client-id",
+              email: "a@hotmail.com",
+              password: "pass",
+              clientId: "client-id",
+              refreshToken: "refresh-token",
+              status: "authorized",
+            },
+          ],
+        }}
+        ready
+        onSettingsChange={vi.fn()}
+        onStartOAuth={vi.fn()}
+        onSubmitOAuthCallback={vi.fn()}
+        onPollOAuthStatus={vi.fn()}
+        onFetchHotmailCode={vi.fn()}
+        onCheckLoginQuota={vi.fn()}
+      />,
+    );
+
+    const pageHeader = document.querySelector(".oauth-page__header");
+    const statusPanel = screen.getByRole("region", { name: "OAuth 状态" });
+
+    expect(pageHeader).not.toBeNull();
+    expect(within(pageHeader as HTMLElement).queryByRole("button", { name: "获取 Hotmail 验证码" })).not.toBeInTheDocument();
+    expect(within(pageHeader as HTMLElement).queryByRole("button", { name: "发起 OAuth登录" })).not.toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "获取 Hotmail 验证码" })).toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "发起 OAuth登录" })).toBeInTheDocument();
+    expect(within(statusPanel).getByRole("button", { name: "检查登录状态" })).toBeInTheDocument();
+  });
+
   it("calls queue builders with the expected scopes", async () => {
     const user = userEvent.setup();
     const onBuildQueue = vi.fn();
@@ -354,8 +392,7 @@ describe("CodexOAuthPanel", () => {
     }));
   });
 
-  it("persists the local Hotmail token checkbox setting", async () => {
-    const user = userEvent.setup();
+  it("shows that Hotmail credentials are persisted locally in plaintext", async () => {
     const onSettingsChange = vi.fn();
 
     render(
@@ -372,12 +409,9 @@ describe("CodexOAuthPanel", () => {
       />,
     );
 
-    await user.click(screen.getByRole("checkbox", { name: "本地持久保存 Hotmail Token" }));
-
-    expect(onSettingsChange).toHaveBeenCalledWith(expect.objectContaining({
-      hotmailHelperUrl: "http://127.0.0.1:17373",
-      rememberHotmailTokens: true,
-    }));
+    expect(screen.queryByRole("checkbox", { name: "本地持久保存 Hotmail Token" })).not.toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent("Hotmail 账号信息会以明文保存在本地浏览器中");
+    expect(onSettingsChange).not.toHaveBeenCalled();
   });
 
   it("starts OAuth, fetches hotmail code, and checks CPA status", async () => {

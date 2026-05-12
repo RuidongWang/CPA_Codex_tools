@@ -1,6 +1,7 @@
 import {
   DEFAULT_KEEPER_SETTINGS,
   DEFAULT_QUERY_CONCURRENCY,
+  DEFAULT_UI_SETTINGS,
   inspectManagementBaseUrl,
   normalizePayload,
   normalizeRuntimeConfig,
@@ -115,9 +116,18 @@ describe("normalizeRuntimeConfig", () => {
     expect(config.oauthSettings).toEqual({
       hotmailHelperUrl: "http://127.0.0.1:17373",
       hotmailAccounts: [],
-      rememberHotmailTokens: false,
+      rememberHotmailTokens: true,
       importedInvalidAccountEmails: [],
     });
+    expect(config.uiSettings).toEqual(DEFAULT_UI_SETTINGS);
+  });
+
+  it("normalizes UI settings and rejects unsupported values", () => {
+    expect(normalizeRuntimeConfig({ uiSettings: { themeMode: "light", language: "en" } }).uiSettings).toEqual({
+      themeMode: "light",
+      language: "en",
+    });
+    expect(normalizeRuntimeConfig({ uiSettings: { themeMode: "sepia", language: "jp" } as never }).uiSettings).toEqual(DEFAULT_UI_SETTINGS);
   });
 
   it("normalizes keeper settings into safe bounds", () => {

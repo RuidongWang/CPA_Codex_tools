@@ -18,6 +18,7 @@ import {
   clearLocalCache,
   DEFAULT_KEEPER_SETTINGS,
   DEFAULT_QUERY_CONCURRENCY,
+  DEFAULT_UI_SETTINGS,
   downloadSelectedAccounts,
   exportSensitiveConfig,
   fetchAccountList,
@@ -34,6 +35,7 @@ import {
   submitCodexOAuthCallback,
   syncAccountPriorities,
 } from "./lib/api";
+import { I18nProvider } from "./lib/i18n";
 import { buildKeeperDuplicateGroups, type KeeperDuplicateGroup } from "./lib/keeper-duplicates";
 import { createOAuthJobStore, type OAuthJobStore } from "./lib/oauth-job-store";
 import { buildOAuthJobs, summarizeOAuthJobs, type OAuthQueueScope } from "./lib/oauth-jobs";
@@ -47,7 +49,7 @@ import {
 } from "./lib/priority";
 import { buildOverviewStats, buildPlanCounts, cycleSort, filterItems, mergePayload, sortItems, type SortState } from "./lib/view-model";
 import { isReadmeDemoMode, README_DEMO_CONFIG, README_DEMO_PAYLOAD } from "./lib/readme-demo";
-import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, OAuthJob, OAuthSettings, PayloadEnvelope, RuntimeConfig } from "./types";
+import type { AccountItem, KeeperDirectAction, KeeperRunResult, KeeperSettings, OAuthJob, OAuthSettings, PayloadEnvelope, RuntimeConfig, UiSettings } from "./types";
 
 const PROGRESS_HOLD_MS = 2000;
 const PROGRESS_FADE_MS = 240;
@@ -63,6 +65,7 @@ const EMPTY_CONFIG: RuntimeConfig = {
   priorityPlanOrder: PRIORITY_PLAN_KEYS,
   priorityPlanRanges: {},
   oauthSettings: DEFAULT_OAUTH_SETTINGS,
+  uiSettings: DEFAULT_UI_SETTINGS,
 };
 
 function hasManagementConfig(config: RuntimeConfig): boolean {
@@ -145,6 +148,20 @@ function formatElapsedLabel(durationMs: number): string {
     return `总耗时 ${(durationMs / 1000).toFixed(2)} 秒`;
   }
   return `总耗时 ${Math.round(durationMs)} ms`;
+}
+
+function resolveUiThemeMode(uiSettings: UiSettings): "light" | "dark" {
+  if (uiSettings.themeMode === "light" || uiSettings.themeMode === "dark") {
+    return uiSettings.themeMode;
+  }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+  ) {
+    return "dark";
+  }
+  return "light";
 }
 
 async function persistPayloadCache(payload: PayloadEnvelope): Promise<void> {
@@ -422,7 +439,33 @@ export default function App() {
     keeperSettings: config.keeperSettings ?? DEFAULT_KEEPER_SETTINGS,
     priorityPlanRanges: config.priorityPlanRanges ?? {},
     oauthSettings: config.oauthSettings ?? DEFAULT_OAUTH_SETTINGS,
+    uiSettings: config.uiSettings ?? DEFAULT_UI_SETTINGS,
   };
+
+  useEffect(() => {
+    const uiSettings = effectiveConfig.uiSettings ?? DEFAULT_UI_SETTINGS;
+    const mediaQuery = typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-color-scheme: dark)")
+      : null;
+
+    function applyTheme() {
+      const resolvedTheme = resolveUiThemeMode(uiSettings);
+      document.documentElement.dataset.theme = resolvedTheme;
+      document.documentElement.dataset.themeMode = uiSettings.themeMode;
+      document.documentElement.lang = uiSettings.language === "en" ? "en" : "zh-CN";
+      document.documentElement.style.colorScheme = resolvedTheme;
+    }
+
+    applyTheme();
+    if (uiSettings.themeMode !== "system" || !mediaQuery) {
+      return undefined;
+    }
+    mediaQuery.addEventListener("change", applyTheme);
+    return () => {
+      mediaQuery.removeEventListener("change", applyTheme);
+    };
+  }, [effectiveConfig.uiSettings]);
+
   const draftedItems = applyPriorityDrafts(allItems, priorityDrafts);
   const overviewItems = filterItems(draftedItems, {
     plan: selectedPlan,
@@ -467,10 +510,6 @@ export default function App() {
     lastBackupAt !== null &&
     lastBackupAt >= lastDraftChangeAt;
   const canSyncPriorities = dirtyPriorityItems.length > 0 && readyToQuery;
-  const backupButtonLabel = selectedCount > 0
-    ? `下载选中 (${selectedCount})`
-    : "下载所有账号";
-
   const selectableItems = activePage === "keeper" ? keeperItems : visibleItems;
 
   useEffect(() => {
@@ -915,7 +954,7 @@ export default function App() {
     );
   }
 
-  async function handleSaveSettings(settings: { queryConcurrency: number; keeperSettings: KeeperSettings }) {
+  async function handleSaveSettings(settings: { queryConcurrency: number; keeperSettings: KeeperSettings; uiSettings: UiSettings }) {
     const nextConfig = {
       ...config,
       ...settings,
@@ -955,6 +994,7 @@ export default function App() {
     await handleSaveSettings({
       queryConcurrency: effectiveConfig.queryConcurrency,
       keeperSettings,
+      uiSettings: effectiveConfig.uiSettings ?? DEFAULT_UI_SETTINGS,
     });
   }
 
@@ -1641,20 +1681,25 @@ export default function App() {
     await runPrioritySync();
   }
 
+  const appLanguage = (effectiveConfig.uiSettings ?? DEFAULT_UI_SETTINGS).language;
+
   if (!readmeDemoMode && sessionState !== "authenticated") {
     return (
-      <LoginPage
-        config={effectiveConfig}
-        busy={busyMode === "bootstrap"}
-        checking={sessionState === "checking"}
-        errorMessage={loginErrorMessage}
-        onConfigChange={patchConfig}
-        onSubmit={handleLoginSubmit}
-      />
+      <I18nProvider language={appLanguage}>
+        <LoginPage
+          config={effectiveConfig}
+          busy={busyMode === "bootstrap"}
+          checking={sessionState === "checking"}
+          errorMessage={loginErrorMessage}
+          onConfigChange={patchConfig}
+          onSubmit={handleLoginSubmit}
+        />
+      </I18nProvider>
     );
   }
 
   return (
+    <I18nProvider language={appLanguage}>
     <div className="stitch-shell">
       <CodexOAuthBridge
         items={allItems}
@@ -1693,7 +1738,6 @@ export default function App() {
               rootRef={toolbarRef}
               loadingLabel={loadingLabel}
               lastUpdated={payload?.meta.generated_at ?? ""}
-              backupLabel={backupButtonLabel}
               canBackupAccounts={allItems.length > 0 && readyToQuery}
               canOpenPriorityBatch={allItems.length > 0}
               canQuerySelected={selectedCount > 0 && readyToQuery}
@@ -1958,5 +2002,6 @@ export default function App() {
         onSyncWithoutBackup={handleSyncWithoutBackup}
       />
     </div>
+    </I18nProvider>
   );
 }

@@ -17,6 +17,10 @@
     betweenJobsDelayMs: 30000,
     jobTimeoutMs: 300000,
   });
+  const DEFAULT_PLATFORM_SETTINGS = Object.freeze({
+    platformBaseUrl: '',
+    platformPasswordSaved: false,
+  });
   const SETTING_FIELDS = Object.freeze([
     ['stepWaitMs', 'setting-step-wait', DEFAULT_SETTINGS.stepWaitMs, 1000, 60000],
     ['clickProgressTimeoutMs', 'setting-click-timeout', DEFAULT_SETTINGS.clickProgressTimeoutMs, 1000, 60000],
@@ -43,6 +47,13 @@
   const resumeButton = document.getElementById('resume-batch');
   const buildQueueButton = document.getElementById('build-queue');
   const readPoolsButton = document.getElementById('read-pools');
+  const savePlatformSettingsButton = document.getElementById('save-platform-settings');
+  const resetPlatformSettingsButton = document.getElementById('reset-platform-settings');
+  const platformState = document.getElementById('platform-state');
+  const platformBaseUrlInput = document.getElementById('platform-base-url');
+  const platformPasswordInput = document.getElementById('platform-password');
+  const platformPasswordToggle = document.getElementById('platform-password-toggle');
+  const platformSavePasswordInput = document.getElementById('platform-save-password');
   const saveSettingsButton = document.getElementById('save-settings');
   const resetSettingsButton = document.getElementById('reset-settings');
   const settingsState = document.getElementById('settings-state');
@@ -68,6 +79,7 @@
   let queueRecentErrors = [];
   let panelRecentErrors = [];
   let latestSettings = { ...DEFAULT_SETTINGS };
+  let latestPlatformSettings = { ...DEFAULT_PLATFORM_SETTINGS };
 
   function send(action, payload = {}) {
     return new Promise((resolve) => {
@@ -84,6 +96,82 @@
 
   function asText(value) {
     return typeof value === 'string' ? value.trim() : '';
+  }
+
+  function normalizePlatformBaseUrl(value) {
+    const raw = asText(value);
+    if (!raw) {
+      return '';
+    }
+    try {
+      const parsed = new URL(raw);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return '';
+      }
+      if (parsed.username || parsed.password) {
+        return '';
+      }
+      parsed.search = '';
+      parsed.hash = '';
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+      return parsed.pathname === '/' ? parsed.origin : parsed.href;
+    } catch {
+      return '';
+    }
+  }
+
+  function normalizePlatformSettings(input = {}) {
+    const source = input && typeof input === 'object' ? input : {};
+    return {
+      platformBaseUrl: normalizePlatformBaseUrl(source.platformBaseUrl),
+      platformPasswordSaved: Boolean(source.platformPasswordSaved),
+    };
+  }
+
+  function buildPlatformPermissionPattern(platformBaseUrl) {
+    const normalized = normalizePlatformBaseUrl(platformBaseUrl);
+    if (!normalized) {
+      return '';
+    }
+    const parsed = new URL(normalized);
+    return `${parsed.protocol}//${parsed.host}/*`;
+  }
+
+  function chromePermissionCall(method, permissions) {
+    return new Promise((resolve) => {
+      try {
+        chrome.permissions[method](permissions, (granted) => {
+          const runtimeError = chrome.runtime?.lastError?.message || '';
+          if (runtimeError) {
+            resolve({ ok: false, error: runtimeError, granted: false });
+            return;
+          }
+          resolve({ ok: true, granted: Boolean(granted) });
+        });
+      } catch (error) {
+        resolve({ ok: false, error: error?.message || String(error), granted: false });
+      }
+    });
+  }
+
+  async function ensurePlatformPermission(platformBaseUrl) {
+    const pattern = buildPlatformPermissionPattern(platformBaseUrl);
+    if (!pattern || !chrome.permissions?.contains || !chrome.permissions?.request) {
+      return { ok: true };
+    }
+    const permissions = { origins: [pattern] };
+    const existing = await chromePermissionCall('contains', permissions);
+    if (existing.ok && existing.granted) {
+      return { ok: true };
+    }
+    const requested = await chromePermissionCall('request', permissions);
+    if (!requested.ok) {
+      return { ok: false, error: requested.error || '无法请求平台地址权限' };
+    }
+    if (!requested.granted) {
+      return { ok: false, error: '未授予平台地址权限' };
+    }
+    return { ok: true };
   }
 
   function asCount(value) {
@@ -263,6 +351,107 @@
   function setSettingsBusy(busy) {
     saveSettingsButton.disabled = Boolean(busy);
     resetSettingsButton.disabled = Boolean(busy);
+  }
+
+  function setPlatformSettingsBusy(busy) {
+    savePlatformSettingsButton.disabled = Boolean(busy);
+    resetPlatformSettingsButton.disabled = Boolean(busy);
+    platformBaseUrlInput.disabled = Boolean(busy);
+    platformPasswordInput.disabled = Boolean(busy);
+    platformPasswordToggle.disabled = Boolean(busy);
+    platformSavePasswordInput.disabled = Boolean(busy);
+  }
+
+  function setPlatformPasswordVisible(visible) {
+    const shown = Boolean(visible);
+    platformPasswordInput.type = shown ? 'text' : 'password';
+    platformPasswordToggle.setAttribute('aria-pressed', shown ? 'true' : 'false');
+    platformPasswordToggle.setAttribute('aria-label', shown ? '隐藏访问密码' : '显示访问密码');
+    platformPasswordToggle.title = shown ? '隐藏访问密码' : '显示访问密码';
+  }
+
+  function renderPlatformSettings(settings, stateText = '已读取') {
+    latestPlatformSettings = normalizePlatformSettings(settings);
+    platformBaseUrlInput.value = latestPlatformSettings.platformBaseUrl;
+    platformPasswordInput.value = '';
+    setPlatformPasswordVisible(false);
+    platformPasswordInput.placeholder = latestPlatformSettings.platformPasswordSaved
+      ? '已保存，留空保持原密码'
+      : '勾选后保存密码';
+    platformSavePasswordInput.checked = latestPlatformSettings.platformPasswordSaved;
+    platformState.textContent = latestPlatformSettings.platformPasswordSaved
+      ? `${stateText} · 密码已保存`
+      : stateText;
+  }
+
+  function readPlatformSettingsForm() {
+    return {
+      platformBaseUrl: normalizePlatformBaseUrl(platformBaseUrlInput.value),
+      platformPassword: platformPasswordInput.value || '',
+      savePlatformPassword: Boolean(platformSavePasswordInput.checked),
+    };
+  }
+
+  async function loadPlatformSettings() {
+    platformState.textContent = '读取中';
+    setPlatformSettingsBusy(true);
+    const response = await send('GET_PLATFORM_SETTINGS');
+    setPlatformSettingsBusy(false);
+    if (!response.ok) {
+      rememberPanelError(response.error, 'GET_PLATFORM_SETTINGS');
+      renderPlatformSettings(latestPlatformSettings, '默认值');
+      renderStatus(response.status, response.error);
+      return;
+    }
+    renderPlatformSettings(response.result?.settings, '已读取');
+    renderStatus(response.status, response.error);
+  }
+
+  async function savePlatformSettings() {
+    platformState.textContent = '保存中';
+    setPlatformSettingsBusy(true);
+    const rawPlatformBaseUrl = asText(platformBaseUrlInput.value);
+    if (rawPlatformBaseUrl && !normalizePlatformBaseUrl(rawPlatformBaseUrl)) {
+      setPlatformSettingsBusy(false);
+      rememberPanelError('Web 地址无效', 'SAVE_PLATFORM_SETTINGS');
+      platformState.textContent = '地址无效';
+      renderStatus(latestStatus, 'Web 地址无效');
+      return;
+    }
+    const nextSettings = readPlatformSettingsForm();
+    const permission = await ensurePlatformPermission(nextSettings.platformBaseUrl);
+    if (!permission.ok) {
+      setPlatformSettingsBusy(false);
+      rememberPanelError(permission.error, 'SAVE_PLATFORM_SETTINGS');
+      platformState.textContent = '权限失败';
+      renderStatus(latestStatus, permission.error);
+      return;
+    }
+    const response = await send('SAVE_PLATFORM_SETTINGS', nextSettings);
+    setPlatformSettingsBusy(false);
+    if (!response.ok) {
+      rememberPanelError(response.error, 'SAVE_PLATFORM_SETTINGS');
+      platformState.textContent = '保存失败';
+      renderStatus(response.status, response.error);
+      return;
+    }
+    renderPlatformSettings(response.result?.settings, '已保存');
+    renderStatus(response.status, response.error);
+  }
+
+  async function resetPlatformSettings() {
+    platformState.textContent = '重置中';
+    setPlatformSettingsBusy(true);
+    const response = await send('RESET_PLATFORM_SETTINGS');
+    setPlatformSettingsBusy(false);
+    if (!response.ok) {
+      rememberPanelError(response.error, 'RESET_PLATFORM_SETTINGS');
+      platformState.textContent = '重置失败';
+      renderStatus(response.status, response.error);
+      return;
+    }
+    renderPlatformSettings(response.result?.settings, '已重置');
+    renderStatus(response.status, response.error);
   }
 
   function renderSettings(settings, stateText = '已读取') {
@@ -608,10 +797,17 @@
 
   readPoolsButton.addEventListener('click', readPools);
   buildQueueButton.addEventListener('click', buildQueue);
+  platformPasswordToggle.addEventListener('click', () => {
+    setPlatformPasswordVisible(platformPasswordInput.type === 'password');
+  });
+  savePlatformSettingsButton.addEventListener('click', savePlatformSettings);
+  resetPlatformSettingsButton.addEventListener('click', resetPlatformSettings);
   saveSettingsButton.addEventListener('click', saveSettings);
   resetSettingsButton.addEventListener('click', resetSettings);
 
+  renderPlatformSettings(DEFAULT_PLATFORM_SETTINGS, '默认值');
   renderSettings(DEFAULT_SETTINGS, '默认值');
+  loadPlatformSettings();
   loadSettings();
   refreshStatus();
   renderQueueSummary(null);

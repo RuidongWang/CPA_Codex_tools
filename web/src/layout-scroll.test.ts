@@ -71,6 +71,16 @@ describe("layout scroll contract", () => {
     expect(keeperStatsBlock).toMatch(/grid-template-columns:\s*repeat\(7,\s*minmax\(0,\s*1fr\)\)/);
   });
 
+  it("keeps overview metrics as a compact horizontal strip", () => {
+    const metricGridBlock = readRuleBlock(/\.metric-grid\s*\{([\s\S]*?)\}\s*\.metric-card/m);
+    const metricCardBlock = readRuleBlock(/\.metric-card\s*\{([\s\S]*?)\}\s*button\.metric-card/m);
+
+    expect(metricGridBlock).toMatch(/display:\s*flex/);
+    expect(metricGridBlock).toMatch(/overflow-x:\s*auto/);
+    expect(metricCardBlock).toMatch(/grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);
+    expect(metricCardBlock).toMatch(/min-height:\s*48px/);
+  });
+
   it("aligns Keeper selected action icons with button text", () => {
     const actionButtonBlock = readRuleBlock(/\.keeper-selected-actions__buttons\s+\.command-button\s*\{([\s\S]*?)\}/m);
     const actionIconBlock = readRuleBlock(/\.keeper-selected-actions__buttons\s+\.material-symbols-outlined\s*\{([\s\S]*?)\}/m);

@@ -35,6 +35,10 @@
     betweenJobsDelayMs: 30000,
     jobTimeoutMs: 5 * 60 * 1000,
   });
+  const DEFAULT_PLATFORM_SETTINGS = Object.freeze({
+    platformBaseUrl: '',
+    platformPasswordSaved: false,
+  });
   const AUTOMATION_SETTING_LIMITS = Object.freeze({
     stepWaitMs: Object.freeze({ min: 1000, max: 60000 }),
     clickProgressTimeoutMs: Object.freeze({ min: 1000, max: 60000 }),
@@ -58,6 +62,90 @@
   function isLocalAppUrl(value) {
     const parsed = parseUrl(value);
     return Boolean(parsed && parsed.protocol === 'http:' && LOCAL_HOST_SET.has(parsed.hostname));
+  }
+
+  function normalizePlatformBaseUrl(value) {
+    const parsed = parseUrl(asString(value));
+    if (!parsed || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) {
+      return '';
+    }
+    if (parsed.username || parsed.password) {
+      return '';
+    }
+    parsed.search = '';
+    parsed.hash = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+    return parsed.pathname === '/' ? parsed.origin : parsed.href;
+  }
+
+  function normalizePlatformSettings(input = {}) {
+    const source = input && typeof input === 'object' ? input : {};
+    return {
+      platformBaseUrl: normalizePlatformBaseUrl(source.platformBaseUrl),
+      platformPasswordSaved: Boolean(source.platformPasswordSaved),
+    };
+  }
+
+  function getPlatformUrl(settings = {}) {
+    const normalized = normalizePlatformSettings(settings);
+    return normalized.platformBaseUrl ? parseUrl(normalized.platformBaseUrl) : null;
+  }
+
+  function getPlatformBasePath(settings = {}) {
+    const configured = getPlatformUrl(settings);
+    if (!configured || configured.pathname === '/') {
+      return '';
+    }
+    return configured.pathname.replace(/\/+$/, '');
+  }
+
+  function isPathUnderBase(pathname, basePath) {
+    if (!basePath) {
+      return true;
+    }
+    return pathname === basePath || pathname.startsWith(`${basePath}/`);
+  }
+
+  function isConfiguredPlatformUrl(value, settings = {}) {
+    const configured = getPlatformUrl(settings);
+    if (!configured) {
+      return isLocalAppUrl(value);
+    }
+    const parsed = parseUrl(value);
+    return Boolean(
+      parsed
+      && parsed.protocol === configured.protocol
+      && parsed.host === configured.host
+      && isPathUnderBase(parsed.pathname, getPlatformBasePath(settings))
+    );
+  }
+
+  function buildPlatformHostPermissionPattern(settings = {}) {
+    const configured = getPlatformUrl(settings);
+    return configured ? `${configured.protocol}//${configured.host}/*` : '';
+  }
+
+  function isSupportedCallbackPath(pathname, settings = {}) {
+    if (CALLBACK_PATH_SET.has(pathname)) {
+      return true;
+    }
+    const basePath = getPlatformBasePath(settings);
+    if (!basePath) {
+      return false;
+    }
+    return CALLBACK_PATHS.some((callbackPath) => pathname === `${basePath}${callbackPath}`);
+  }
+
+  function isPlatformCallbackUrl(value, settings = {}) {
+    const parsed = parseUrl(value);
+    if (!parsed) {
+      return false;
+    }
+    if (isLocalAppUrl(parsed.href)) {
+      return true;
+    }
+    const configured = getPlatformUrl(settings);
+    return Boolean(configured && parsed.protocol === configured.protocol && parsed.host === configured.host);
   }
 
   function isOpenAIAuthUrl(value) {
@@ -87,15 +175,15 @@
     };
   }
 
-  function parseCallbackUrl(value) {
+  function parseCallbackUrl(value, settings = {}) {
     const parsed = parseUrl(value);
     if (!parsed) {
       return { ok: false, reason: 'invalid_url', url: String(value || '') };
     }
-    if (!isLocalAppUrl(parsed.href)) {
-      return { ok: false, reason: 'not_local_app', url: parsed.href };
+    if (!isPlatformCallbackUrl(parsed.href, settings)) {
+      return { ok: false, reason: 'not_configured_platform', url: parsed.href };
     }
-    if (!CALLBACK_PATH_SET.has(parsed.pathname)) {
+    if (!isSupportedCallbackPath(parsed.pathname, settings)) {
       return { ok: false, reason: 'unsupported_callback_path', url: parsed.href };
     }
 
@@ -120,13 +208,13 @@
     };
   }
 
-  function isCallbackUrl(value) {
-    return parseCallbackUrl(value).ok;
+  function isCallbackUrl(value, settings = {}) {
+    return parseCallbackUrl(value, settings).ok;
   }
 
   function redactCallbackUrl(value) {
     const parsed = parseUrl(value);
-    if (!parsed || !isCallbackUrl(parsed.href)) {
+    if (!parsed || !isSupportedCallbackPath(parsed.pathname)) {
       return value;
     }
     for (const key of ['code']) {
@@ -211,9 +299,13 @@
     };
   }
 
+  function pickPreferredAppTab(tabs = [], settings = {}) {
+    const appTabs = tabs.filter((tab) => isConfiguredPlatformUrl(tab?.url, settings));
+    return appTabs.find((tab) => tab.active) || appTabs[0] || null;
+  }
+
   function pickPreferredLocalAppTab(tabs = []) {
-    const localTabs = tabs.filter((tab) => isLocalAppUrl(tab?.url));
-    return localTabs.find((tab) => tab.active) || localTabs[0] || null;
+    return pickPreferredAppTab(tabs, DEFAULT_PLATFORM_SETTINGS);
   }
 
   function toFiniteNumber(value) {
@@ -270,23 +362,29 @@
     AUTOMATION_SETTING_LIMITS,
     CALLBACK_PATHS,
     DEFAULT_AUTOMATION_SETTINGS,
+    DEFAULT_PLATFORM_SETTINGS,
     LOCAL_HOSTS,
     OTP_CODE_FETCH_EXTRA_WAIT_MS,
     OPENAI_AUTH_HOSTS,
     OPENAI_CLEAR_ORIGINS,
     OPENAI_RELATED_HOSTS,
+    buildPlatformHostPermissionPattern,
     buildOpenAISessionRemovalOptions,
     buildTrustedClickMouseEvents,
     computeOtpCodeFetchDelayMs,
     createSafeStatus,
     isCallbackUrl,
+    isConfiguredPlatformUrl,
     isLocalAppUrl,
     isOpenAIAuthUrl,
     isOpenAIRelatedUrl,
     normalizeAutomationSettings,
     normalizeOpenAIActionFailure,
+    normalizePlatformBaseUrl,
+    normalizePlatformSettings,
     parseCallbackUrl,
     parseUrl,
+    pickPreferredAppTab,
     pickPreferredLocalAppTab,
     redactSecrets,
   };
