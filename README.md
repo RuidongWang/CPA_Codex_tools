@@ -29,7 +29,8 @@
 - 提供登录页，通过 CPA 管理地址和管理密钥验证后进入控制台。
 - 支持批量查询、单账号查询、批量下载账号配置和批量同步优先级。
 - 支持 Keeper 可视化监控，维护策略参考 [CPACodexKeeper](https://github.com/5345asda/CPACodexKeeper)，可按策略演练或执行维护，也可在账号列表中选中指定账号后直接设置禁用、刷新证书或删除证书。
-- 支持 Codex OAuth 登录辅助页面，可为失效账号发起 CPA OAuth、导入 Hotmail 账号池、获取邮箱验证码、提交 OAuth 回调 URL 并检查登录状态；可选安装 Chrome/Edge 扩展辅助单账号自动登录。
+- 支持 Codex OAuth 登录辅助页面，可为失效账号发起 CPA OAuth、导入 Hotmail 账号池、获取邮箱验证码、提交 OAuth 回调 URL 并检查登录状态；可选安装 Chrome/Edge 扩展辅助单账号或批量自动登录。
+- 设置面板支持亮色/暗色/跟随系统模式和中英文界面切换。
 - 支持大账号量列表虚拟滚动，移动端自动切换为账号卡片。
 - 查询到的额度快照会持久化到 IndexedDB，再次加载账号列表时自动回填。
 - 表格中的 `额度更新时间` 取自接口 body 中 `rate_limit.primary_window.reset_at` 对应的下一次刷新时间。
@@ -103,7 +104,7 @@ Web 端位于 `web/`，由 React、TypeScript 和 Vite 构建。
 - CPA 或前置反向代理需要允许本地 Web 页面跨域访问。
 - 浏览器下载账号配置 JSON，不需要配置本地备份路径。
 - Keeper 页面支持策略配置、账号列表检索和选中账号直操作。维护策略支持禁用阈值、过期阈值、维护并发和维护时自动刷新临期证书。
-- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务；管理密钥、Hotmail 密码和可选保存的 Hotmail Token 会先加密再写入浏览器存储。
+- 本地缓存只保存在当前浏览器内，不会上传到仓库或第三方服务；当前 Web 端会加密保存管理密钥，Hotmail 密码和 refresh token 会随 OAuth 配置保存在当前浏览器本地。
 
 环境要求：
 
@@ -207,17 +208,22 @@ docker compose down
 
 Compose 只负责启动本项目的 Web 环境，不包含 CPA 服务端。
 
-Web 服务启动时会生成运行时加密密钥，并写入 `runtime-secret.js` 供浏览器端解密本地敏感配置。Docker Compose 使用 `/runtime/vault-secret` 持久化该密钥；不要在升级或重启服务时删除对应 volume，否则旧浏览器缓存里的加密管理密钥、Hotmail 密码和 Token 将无法解密。不使用 Docker 时，`npm run web:dev` 和 `npm run web:build` 会在 `web/.runtime/vault-secret` 生成本地密钥，该目录已加入 `.gitignore`。
+Web 服务启动时会生成运行时加密密钥，并写入 `runtime-secret.js` 供浏览器端解密本地管理密钥。Docker Compose 使用 `/runtime/vault-secret` 持久化该密钥；不要在升级或重启服务时删除对应 volume，否则旧浏览器缓存里的加密管理密钥将无法解密。不使用 Docker 时，`npm run web:dev` 和 `npm run web:build` 会在 `web/.runtime/vault-secret` 生成本地密钥，该目录已加入 `.gitignore`。
 
 ## 敏感数据与导出
 
-本项目是浏览器本地工具，不提供服务端密钥库。敏感字段会先在浏览器端加密，再写入当前浏览器配置；同一个浏览器页面仍可以在用户确认后导出明文，便于人工备份和迁移。
+本项目是浏览器本地工具，不提供服务端密钥库。本地配置只保存在当前浏览器 profile 中；同一个浏览器页面仍可以在用户确认后导出明文，便于人工备份和迁移。
 
-加密保存的字段：
+当前 Web 端加密保存的字段：
 
 - CPA 管理密钥：仅在登录页勾选 `记住本次登录` 时保存。
-- Hotmail 密码：导入 Hotmail 账号池后保存，用于刷新页面后继续自动登录流程。
-- Hotmail refresh token：默认不保存；只有勾选 `本地持久保存 Hotmail Token` 时保存。
+
+当前 Web 端明文保存在浏览器本地配置中的字段：
+
+- Hotmail 邮箱、Client ID、密码和 refresh token：导入 Hotmail 账号池后保存，用于刷新页面后继续 OAuth 辅助流程。
+- CPA 管理地址、查询设置、Keeper 策略、优先级分组顺序、优先级区间和界面设置。
+
+因此，远程 HTTP 部署只建议放在可信内网中使用；如果通过公网访问，建议在 Web 前面增加 HTTPS 反向代理。
 
 运行时加密密钥来源：
 
@@ -231,7 +237,7 @@ Web 服务启动时会生成运行时加密密钥，并写入 `runtime-secret.js
 2. 在 `本地数据` 中点击 `导出敏感配置`。
 3. 确认风险提示后，浏览器会下载 `cpa-codex-sensitive-export-YYYYMMDD-HHmmss.json`。
 
-导出的 JSON 是明文，包含 CPA 地址、管理密钥、Hotmail 邮箱、密码、Client ID 和已保存的 Hotmail Token。它适合放入受保护的离线备份或迁移到另一台可信机器，不应提交到仓库、日志、聊天窗口或工单系统。
+导出的 JSON 是明文，包含 CPA 地址、管理密钥、Hotmail 邮箱、密码、Client ID 和 refresh token。它适合放入受保护的离线备份或迁移到另一台可信机器，不应提交到仓库、日志、聊天窗口或工单系统。
 
 ## 批量生成优先级
 
@@ -302,7 +308,7 @@ alice@hotmail.com----password----client-id----refresh-token
 
 ### Chrome/Edge 自动登录扩展
 
-仓库提供可选扩展：`browser-extension/codex-oauth-auto-login/`。它用于在你已经打开本项目 `OAuth` 页面后，辅助完成单账号 OAuth 重登或处理页面顶部的批量恢复队列。
+仓库提供可选扩展：`browser-extension/codex-oauth-auto-login/`。它用于在你已经打开本项目 `OAuth` 页面后，辅助完成单账号 OAuth 重登或处理页面顶部的批量恢复队列。默认支持 `http://localhost/...` 和 `http://127.0.0.1/...`，也可以在扩展侧边栏配置远程 Web 地址。
 
 安装方式：
 
@@ -313,21 +319,23 @@ alice@hotmail.com----password----client-id----refresh-token
 
 使用方式：
 
-1. 在本项目左侧进入 `OAuth` 页面。
-2. 选择一个失效账号，并确认 `Hotmail 账号池` 中存在同邮箱账号。
-3. 点击浏览器工具栏里的 `CPA Codex OAuth` 扩展，浏览器会打开侧边栏而不是浮动弹窗。
-4. 点击 `读取账号池`，侧边栏会从当前本地项目页面读取全部失效账号，以及 Hotmail 账号池中的邮箱、密码、Client ID 和 Token 是否存在。
-5. 按需调整侧边栏 `自动化参数`，其中 `任务间隔(秒)` 会在一个任务结束后、下一个任务开始前等待，用来放慢连续 OAuth state 创建。
-6. 点击 `开始登录`。
+1. 打开本项目 Web 页面并进入左侧 `OAuth` 页面。
+2. 如果 Web 部署在远程地址，在扩展侧边栏的 `平台绑定` 中填写 `Web 地址`，例如 `http://192.168.1.10:5173`，保存时浏览器会请求该 origin 的可选访问权限。
+3. `访问密码` 是扩展侧的持久化配置项：勾选 `保存密码` 后才会加密写入扩展本地存储；留空且已勾选会保留旧密码；取消勾选并保存会删除已保存密码。右侧小眼睛只切换当前输入框明文/隐藏，不回显已保存密码。
+4. 选择一个失效账号，并确认 `Hotmail 账号池` 中存在同邮箱账号。
+5. 点击浏览器工具栏里的 `CPA Codex OAuth` 扩展，浏览器会打开侧边栏而不是浮动弹窗。
+6. 点击 `读取账号池`，侧边栏会从 Web 页面读取失效账号、Hotmail 账号池和队列状态。侧边栏只显示邮箱、状态、Client ID 和错误摘要，不展示 Hotmail 密码、refresh token 或验证码。
+7. 按需调整侧边栏 `自动化参数`，其中 `任务间隔(秒)` 会在一个任务结束后、下一个任务开始前等待，用来放慢连续 OAuth state 创建。
+8. 点击 `生成/刷新队列` 或在 Web OAuth 页面生成队列，再点击 `开始全部`。
 
 扩展会通过页面桥接发起 OAuth、打开 OpenAI 授权页、填写邮箱并自动点击继续，然后按 OpenAI 页面实际填写的邮箱请求本项目获取 Hotmail 验证码、填写验证码、捕获本地 OAuth 回调 URL 并交回本项目提交。遇到 CAPTCHA、MFA、手机号验证、安全检查或无法识别的页面时，扩展会停止并提示你手动处理。
 
 注意：
 
-- 扩展需要能访问本地 CPA Web 页和 OpenAI 登录页。manifest 里声明了 `tabs`、`activeTab`、`scripting`、`webNavigation`、`storage`、`sidePanel`、`cookies`、`browsingData` 权限，以及 `http://127.0.0.1/*`、`http://localhost/*`、`https://auth.openai.com/*`、`https://auth0.openai.com/*`、`https://accounts.openai.com/*` 等 host 权限，用于打开/识别登录页、清理会话、读取本地页面桥接状态并提交 callback。
-- 使用扩展前必须保留一个本地 CPA tab，地址应为 `http://127.0.0.1:*` 或 `http://localhost:*`，并停留在本项目 `OAuth` 页面。扩展侧边栏从这个 tab 读取失效账号、Hotmail 账号池、队列和本地桥接 API；只在 OpenAI 登录页或其它网站打开侧边栏无法读取本地队列。
-- 侧边栏为调试和自动登录准备，会显示 Hotmail 密码；当前实现只按需读取并显示，不写入扩展存储。
-- Hotmail 账号池中的邮箱、Client ID 和密码会加密保存在浏览器本地，方便刷新页面后继续使用扩展自动登录。`refreshToken` 默认不持久保存；只有勾选 `本地持久保存 Hotmail Token` 时，浏览器本地配置才会加密保存 Hotmail Token。只建议在可信本机启用该选项。
+- 扩展默认 host 权限只覆盖本地 Web 页和 OpenAI 登录相关 host；远程 Web 地址通过 `optional_host_permissions` 在保存平台绑定时按 origin 申请，不使用 `<all_urls>`。
+- 使用扩展前必须保留一个可访问的 CPA Codex Tools tab。未配置平台地址时扩展只查找 `http://127.0.0.1:*` 或 `http://localhost:*`；配置后只匹配绑定的远程 Web origin 和 base path。
+- 扩展本地存储只持久化平台绑定地址、可选的扩展访问密码和自动化参数；不会保存 CPA 管理密钥、Hotmail 密码、Hotmail refresh token 或验证码。
+- Hotmail 账号池保存在 Web 端浏览器配置里。当前实现会保存邮箱、Client ID、密码和 refresh token，用于刷新页面后继续 OAuth 辅助流程；请只在可信浏览器环境中导入。
 - OAuth 登录成功后的恢复判断以额度查询结果为准，不只依赖 CPA 登录状态成功。
 - 普通 Web 页面不能跨域控制 `auth.openai.com` DOM；自动填写验证码和点击授权按钮需要安装上述浏览器扩展。
 
@@ -335,10 +343,10 @@ alice@hotmail.com----password----client-id----refresh-token
 
 Web 端本地缓存使用两类浏览器存储：
 
-- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存加密后的管理密钥。
+- `localStorage` 保存 CPA 地址、查询设置、Keeper 设置、优先级分组顺序、每个分组的优先级区间、界面语言/主题和 Codex OAuth Hotmail 账号池等配置；只有登录页勾选“记住本次登录”时才会保存加密后的管理密钥。Hotmail 密码和 refresh token 当前随 OAuth 配置明文保存在当前浏览器 profile 中。
 - `IndexedDB` 保存账号列表缓存和额度快照，用于页面刷新或重新加载账号列表后的自动回填。
 
-本地敏感字段使用运行时密钥加密，包括管理密钥、Hotmail 密码和可选保存的 Hotmail Token。设置面板中的 `导出敏感配置` 会下载明文 JSON，内容包含这些敏感字段，只应保存在可信位置。设置面板中的“清空本地缓存”会清除以上 Web 端缓存和浏览器 fallback 加密密钥。浏览器下载的账号配置 JSON 和敏感配置导出文件不归本项目管理。
+Web 端使用运行时密钥加密管理密钥。设置面板中的 `导出敏感配置` 会下载明文 JSON，内容包含 CPA 地址、管理密钥和 Hotmail 账号池敏感字段，只应保存在可信位置。设置面板中的“清空本地缓存”会清除以上 Web 端缓存和浏览器 fallback 加密密钥。浏览器下载的账号配置 JSON 和敏感配置导出文件不归本项目管理。
 
 本地优先级草稿只存在当前页面内存中。刷新页面后草稿会消失，已同步到 CPA 的远端优先级不受影响。
 
